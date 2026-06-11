@@ -15,10 +15,11 @@ import (
 func NewServer(addr string, logger *slog.Logger) *http.Server {
 	r := chi.NewRouter()
 
-	// RealIP: за nginx настоящий адрес клиента приходит в X-Forwarded-For
-	r.Use(middleware.RealIP)
 	// Recoverer: паника в хендлере отдаёт 500 и пишется в лог,
-	// а не роняет весь процесс вместе с ботом
+	// а не роняет весь процесс вместе с ботом.
+	// NB: middleware.RealIP не используем сознательно — он deprecated как
+	// уязвимый к спуфингу X-Forwarded-For (GHSA-3fxj-6jh8-hvhx); если
+	// понадобится IP клиента, будем доверять заголовку только от nginx.
 	r.Use(middleware.Recoverer)
 
 	r.Get("/healthz", handleHealthz)

@@ -1,0 +1,61 @@
+# Пайплайн CI (ТЗ §7): lint -> test -> build.
+# Запускается СТРОГО в двух случаях (экономия бесплатных минут):
+#   1) Merge Request в main;
+#   2) пуш/слияние в main.
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
+
+stages:
+  - lint
+  - test
+  - build
+
+default:
+  # Новый пуш в ту же ветку отменяет устаревший пайплайн — тоже экономия минут
+  interruptible: true
+
+# Кеш Go-модулей между джобами и пайплайнами: ключ привязан к go.sum,
+# зависимости перекачиваются только при их изменении.
+.go-cache: &go-cache
+  variables:
+    GOPATH: $CI_PROJECT_DIR/.go
+    GOLANGCI_LINT_CACHE: $CI_PROJECT_DIR/.golangci-cache
+  cache:
+    key:
+      files:
+        - go.sum
+    paths:
+      - .go/pkg/mod/
+      - .golangci-cache/
+
+lint:
+  stage: lint
+  # ТЗ просит v1.55-alpine, но он собран на Go 1.21 и не понимает код Go 1.26.
+  # Берём актуальную версию той же линейки образов (alpine).
+  image: golangci/golangci-lint:v2.12.2-alpine
+  <<: *go-cache
+  script:
+    - golangci-lint run ./...
+
+test:
+  stage: test
+  # НЕ alpine: детектору гонок (-race) нужны CGO и glibc,
+  # а в musl-окружении alpine он не поддерживается.
+  image: golang:1.26
+  <<: *go-cache
+  script:
+    - go test -v -race -cover ./...
+
+build:
+  stage: build
+  # Тестовая сборка образа: подтверждаем, что Dockerfile валиден
+  # и проект компилируется в контейнере. Никуда не пушим.
+  image: docker:27
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  script:
+    - docker build --pull -t mq-ticket-detector:ci .
