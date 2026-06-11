@@ -57,6 +57,28 @@ services:
     depends_on:
       postgres_db:
         condition: service_healthy # Не стартуем, пока БД не готова принимать соединения
+      migrator:
+        condition: service_completed_successfully # ...и пока не применены миграции
+
+  # 2.1. Миграции схемы БД (Раздел 4 ТЗ)
+  # One-shot контейнер: применяет миграции и завершается.
+  # Идемпотентен — при повторном запуске «up» ничего не меняет.
+  migrator:
+    image: migrate/migrate:v4.17.1
+    container_name: ticket_migrator
+    restart: "no"
+    volumes:
+      - ./migrations:/migrations:ro
+    networks:
+      - internal_db
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+    # ${...} подставляются docker compose из файла .env при разборе yml
+    command:
+      - "-path=/migrations"
+      - "-database=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres_db:5432/${POSTGRES_DB}?sslmode=disable"
+      - "up"
 
   # 3. База данных PostgreSQL (Раздел 4 ТЗ)
   postgres_db:
