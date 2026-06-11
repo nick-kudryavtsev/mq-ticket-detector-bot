@@ -148,14 +148,15 @@
 
 ---
 
-## 11. `feature/11-changedetection` — Настройка скрейпера
+## ✅ 11. `feature/11-changedetection` — Настройка скрейпера
 
 **Цель**: сценарий 2 (шаги 1–3): связать changedetection.io с бэкендом.
 
-- [ ] Watch на страницу Medium Quality, интервал 60s, триггер по ключевому слову «Билеты в продаже»
-- [ ] Notification webhook: POST `http://go_backend:8000/api/v1/trigger` + заголовок `X-Changedetection-Auth`
-- [ ] JSON-тело с `notification_tags` (метка шоу)
-- [ ] Документация по добавлению нового шоу (watch + запись в `shows`)
+- [x] Watch: интервал 60s, триггер «Билеты в продаже» (проверено на управляемой тест-странице)
+- [x] Notification: apprise `json://go_backend:8000/api/v1/trigger` + заголовок через `+X-Changedetection-Auth=...`
+- [x] JSON-тело: метка шоу через `:notification_tags=<label>` (инъекция поля в payload)
+- [x] Документация в README: добавление шоу (insert + watch, UI и API), нюанс с charset
+- [x] Порт UI на хосте: 5001 (на macOS 5000 занят AirPlay), только localhost
 
 **Готово, когда**: изменение тестовой страницы приводит к реальному сообщению в Telegram.
 

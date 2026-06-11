@@ -28,15 +28,62 @@ docker compose up -d   # вся инфраструктура + миграции 
 
 ## Управление шоу
 
-Шоу добавляются вручную; `changedetection_label` должен совпадать с тегом
-`notification_tags` в настройках скрейпера:
+Добавление шоу — два шага: запись в БД и watch в скрейпере. Связка —
+строка-метка (`changedetection_label` = тег в notification-URL watch-а).
+
+**Шаг 1.** Запись в `shows`:
 
 ```bash
 docker exec ticket_postgres psql -U ticket_bot -d ticket_bot \
   -c "INSERT INTO shows (title, changedetection_label) VALUES ('Стендап', 'show_standup');"
 ```
 
-После этого шоу появится в `/shows` у всех авторизованных пользователей.
+Шоу сразу появится в `/shows` у всех авторизованных пользователей.
+
+**Шаг 2.** Watch в changedetection.io (см. следующий раздел).
+
+## Настройка changedetection.io
+
+Веб-интерфейс скрейпера доступен только с localhost:
+локально — <http://localhost:5001> (на macOS порт 5000 занят AirPlay),
+на сервере — через SSH-туннель: `ssh -L 5001:localhost:5001 user@server`.
+
+Для каждого шоу создаётся watch:
+
+1. **URL** — страница шоу на сайте Medium Quality.
+2. **Recheck time** — 60 секунд (ТЗ, сценарий 2).
+3. Вкладка **Filters & Triggers → Trigger/wait for text** — `Билеты в продаже`:
+   изменение засчитывается, только если на странице появился этот текст.
+4. Вкладка **Notifications → Notification URL List**:
+
+   ```
+   json://go_backend:8000/api/v1/trigger?+X-Changedetection-Auth=<CHANGEDETECTION_AUTH_TOKEN из .env>&:notification_tags=<changedetection_label шоу>
+   ```
+
+   - `json://` — POST по http (внутри docker-сети, в интернет не выходит);
+   - `+Имя=значение` добавляет HTTP-заголовок (авторизация на бэкенде);
+   - `:notification_tags=...` добавляет поле в JSON-тело — бэкенд найдёт
+     шоу по этой метке. Title/Body можно оставить любыми: бэкенд читает
+     только `notification_tags`.
+
+Кнопка **Send test notification** на вкладке Notifications дёргает боевую
+рассылку — все подписчики шоу получат уведомление, удобно для проверки.
+
+То же самое можно сделать через API скрейпера (`x-api-key` — в Settings → API):
+
+```bash
+curl -X POST http://localhost:5001/api/v1/watch \
+  -H "x-api-key: <ключ>" -H 'Content-Type: application/json' \
+  -d '{"url": "https://mediumquality.ru/standup",
+       "title": "Стендап",
+       "time_between_check": {"seconds": 60},
+       "trigger_text": ["Билеты в продаже"],
+       "notification_urls": ["json://go_backend:8000/api/v1/trigger?+X-Changedetection-Auth=<секрет>&:notification_tags=show_standup"]}'
+```
+
+**Важно про кодировку**: если сайт отдаёт `Content-Type` без `charset`,
+кириллический триггер-текст может не совпасть (страница декодируется
+как latin-1). Реальные сайты обычно отдают charset корректно.
 
 ## Nginx и SSL
 

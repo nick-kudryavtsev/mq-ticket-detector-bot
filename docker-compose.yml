@@ -106,8 +106,9 @@ services:
     restart: always
     # Веб-интерфейс доступен ТОЛЬКО с localhost сервера (через SSH-туннель).
     # Наружу порт не торчит — весь внешний трафик обязан идти через Nginx.
+    # Хостовый порт 5001: на macOS 5000 занят AirPlay Receiver.
     ports:
-      - "127.0.0.1:5000:5000"
+      - "127.0.0.1:5001:5000"
     volumes:
       - changedet_data:/datastore
     networks:
