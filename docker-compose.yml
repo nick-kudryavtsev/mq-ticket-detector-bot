@@ -39,13 +39,10 @@ services:
       - go_backend
 
   # 2. Go-Бэкенд и Бот (Раздел 5 ТЗ)
-  # TODO(шаг N): заменить заглушку на сборку из Dockerfile:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile
   go_backend:
-    image: alpine:3.20 # ВРЕМЕННАЯ заглушка для проверки сетевого каркаса
-    command: sleep infinity
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: ticket_go_backend
     restart: always
     # Порты "8000:8000" НАРУЖУ НЕ ВЫСТАВЛЯЕМ. Доступ только через Nginx.

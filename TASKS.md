@@ -35,16 +35,16 @@
 
 ---
 
-## 3. `feature/3-go-skeleton` — Скелет Go-приложения и Dockerfile
+## ✅ 3. `feature/3-go-skeleton` — Скелет Go-приложения и Dockerfile
 
 **Цель**: компилируемое модульное приложение в контейнере вместо заглушки.
 
-- [ ] `go.mod`, структура: `/cmd/bot/main.go`, `/internal/config`, `/internal/repository`, `/internal/service`, `/internal/delivery/http`
-- [ ] Чтение конфигурации из переменных окружения (`.env`)
-- [ ] HTTP-сервер (`go-chi` или `net/http`) с эндпоинтом `/healthz`
-- [ ] Graceful shutdown: перехват SIGINT/SIGTERM, корректное закрытие сервера
-- [ ] Multi-stage Dockerfile (builder → scratch/distroless), образ минимального размера
-- [ ] Замена alpine-заглушки в `docker-compose.yml` на `build: .`
+- [x] `go.mod`, структура: `/cmd/bot/main.go`, `/internal/config`, `/internal/repository`, `/internal/service`, `/internal/delivery/http`
+- [x] Чтение конфигурации из переменных окружения (`.env`)
+- [x] HTTP-сервер на `go-chi` (middleware RealIP, Recoverer) с эндпоинтом `/healthz`
+- [x] Graceful shutdown: перехват SIGINT/SIGTERM, корректное закрытие сервера
+- [x] Multi-stage Dockerfile (builder → distroless), образ 14MB
+- [x] Замена alpine-заглушки в `docker-compose.yml` на `build: .`
 
 **Готово, когда**: `docker compose up --build` собирает образ, `/healthz` отвечает 200 изнутри сети.
 
