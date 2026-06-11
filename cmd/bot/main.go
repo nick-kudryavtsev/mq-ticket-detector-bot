@@ -62,6 +62,11 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
+	// Сценарии 2 и 3 ТЗ: веерная рассылка и обработка блокировок
+	notifier := service.NewNotifier(
+		repos.Shows, repos.Subscriptions, repos.Users,
+		telegram.NewSender(tgBot), logger)
+
 	// Поллинг останавливается отменой того же ctx, что и весь процесс
 	botDone := make(chan struct{})
 	go func() {
@@ -70,7 +75,7 @@ func run(logger *slog.Logger) error {
 		tgBot.Start(ctx)
 	}()
 
-	srv := httpdelivery.NewServer(cfg.HTTPAddr, logger, pool)
+	srv := httpdelivery.NewServer(cfg.HTTPAddr, logger, pool, notifier, cfg.ChangedetectionAuthToken)
 
 	serverErr := make(chan error, 1)
 	go func() {
@@ -90,11 +95,17 @@ func run(logger *slog.Logger) error {
 	}
 
 	// Порядок остановки (ТЗ §5.4): перестаём принимать запросы и апдейты,
-	// ждём завершения активной работы, и только потом defer закроет пул БД.
+	// досылаем текущую пачку рассылки, и только потом defer закроет пул БД.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil && firstErr == nil {
 		firstErr = err
+	}
+
+	if err := notifier.Wait(shutdownCtx); err != nil {
+		logger.Error("waiting for broadcasts", "error", err)
+	} else {
+		logger.Info("broadcasts finished")
 	}
 
 	<-botDone

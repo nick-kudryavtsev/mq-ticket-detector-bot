@@ -18,7 +18,7 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
-func NewServer(addr string, logger *slog.Logger, db Pinger) *http.Server {
+func NewServer(addr string, logger *slog.Logger, db Pinger, trigger TriggerService, scraperSecret string) *http.Server {
 	r := chi.NewRouter()
 
 	// Recoverer: паника в хендлере отдаёт 500 и пишется в лог,
@@ -33,8 +33,11 @@ func NewServer(addr string, logger *slog.Logger, db Pinger) *http.Server {
 	// readiness: процесс жив И база отвечает
 	r.Get("/readyz", handleReadyz(logger, db))
 
-	// Сюда на шаге trigger-api добавится группа:
-	// r.Route("/api/v1", func(r chi.Router) { ... })
+	// Вебхук скрейпера: вся группа /api/v1 закрыта заголовком-секретом
+	r.Route("/api/v1", func(api chi.Router) {
+		api.Use(requireScraperAuth(logger, scraperSecret))
+		api.Post("/trigger", handleTrigger(logger, trigger))
+	})
 
 	return &http.Server{
 		Addr:    addr,

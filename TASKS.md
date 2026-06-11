@@ -107,16 +107,16 @@
 
 ---
 
-## 8. `feature/8-trigger-api` — Вебхук скрейпера и массовая рассылка
+## ✅ 8. `feature/8-trigger-api` — Вебхук скрейпера и массовая рассылка
 
 **Цель**: сценарии 2 и 3: моментальные уведомления и обработка блокировок.
 
-- [ ] `POST /api/v1/trigger`: валидация заголовка `X-Changedetection-Auth` из `.env`, иначе мгновенный 403
-- [ ] Парсинг `notification_tags`, поиск шоу по `changedetection_label`, обновление `last_changed_at`
-- [ ] Выборка активных подписчиков, рассылка пулом горутин (`sync.WaitGroup` / каналы) с учётом rate-limit Telegram
-- [ ] Обработка `403 Forbidden` от Telegram → `is_active=false`, `updated_at=NOW()`
-- [ ] Graceful shutdown: дождаться завершения текущей пачки рассылки
-- [ ] Тесты: авторизация эндпоинта, конкурентная рассылка под `-race`
+- [x] `POST /api/v1/trigger`: constant-time проверка `X-Changedetection-Auth`, иначе мгновенный 403
+- [x] Парсинг `notification_tags`, поиск шоу по `changedetection_label`, обновление `last_changed_at`
+- [x] Рассылка: пул из 8 горутин + rate-limiter 25 msg/s (лимит Telegram ~30), `sync.WaitGroup`
+- [x] `bot.ErrorForbidden` от Telegram → `ErrBlockedByUser` → `is_active=false`, `updated_at=NOW()`
+- [x] Graceful shutdown: `notifier.Wait` досылает текущую пачку до закрытия пула БД
+- [x] Тесты: 403/404/400/202 на эндпоинте, веер на 40 подписчиков под `-race`
 
 **Готово, когда**: curl с верным заголовком запускает рассылку, с неверным — 403; заблокировавшие бота помечаются неактивными.
 

@@ -38,6 +38,26 @@ docker exec ticket_postgres psql -U ticket_bot -d ticket_bot \
 
 После этого шоу появится в `/shows` у всех авторизованных пользователей.
 
+## Вебхук скрейпера
+
+`POST /api/v1/trigger` принимает уведомления changedetection.io. Защита —
+заголовок `X-Changedetection-Auth` со значением `CHANGEDETECTION_AUTH_TOKEN`
+из `.env` (сгенерировать: `openssl rand -hex 32`). Тело:
+`{"notification_tags": "<changedetection_label шоу>"}`.
+
+Симуляция срабатывания скрейпера (изнутри docker-сети, наружу порт закрыт):
+
+```bash
+SECRET=$(grep '^CHANGEDETECTION_AUTH_TOKEN=' .env | cut -d= -f2)
+docker exec ticket_nginx wget -qO- \
+  --header "X-Changedetection-Auth: ${SECRET}" \
+  --post-data '{"notification_tags":"show_standup"}' \
+  http://go_backend:8000/api/v1/trigger
+```
+
+Ответы: `202` — рассылка запущена, `403` — неверный секрет,
+`404` — метка не зарегистрирована в таблице `shows`.
+
 ## Разработка
 
 ```bash
