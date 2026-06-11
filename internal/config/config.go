@@ -22,6 +22,9 @@ type Config struct {
 	BotToken string
 	// BotMode — polling (локальная разработка) или webhook (сервер).
 	BotMode string
+	// ChangedetectionAuthToken — секрет заголовка X-Changedetection-Auth,
+	// которым скрейпер авторизуется на /api/v1/trigger (ТЗ §3.2).
+	ChangedetectionAuthToken string
 }
 
 const (
@@ -58,6 +61,12 @@ func Load() (Config, error) {
 	if cfg.BotMode != BotModePolling && cfg.BotMode != BotModeWebhook {
 		return Config{}, fmt.Errorf("BOT_MODE must be %q or %q, got %q",
 			BotModePolling, BotModeWebhook, cfg.BotMode)
+	}
+
+	cfg.ChangedetectionAuthToken = os.Getenv("CHANGEDETECTION_AUTH_TOKEN")
+	if cfg.ChangedetectionAuthToken == "" {
+		// Пустой секрет означал бы открытый наружу эндпоинт рассылки
+		return Config{}, fmt.Errorf("required env CHANGEDETECTION_AUTH_TOKEN is not set")
 	}
 
 	return cfg, nil

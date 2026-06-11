@@ -14,6 +14,7 @@ func setRequiredEnv(t *testing.T) {
 	t.Setenv("POSTGRES_PASSWORD", "secret")
 	t.Setenv("POSTGRES_DB", "botdb")
 	t.Setenv("BOT_TOKEN", "123:abc")
+	t.Setenv("CHANGEDETECTION_AUTH_TOKEN", "scraper-secret")
 }
 
 func TestLoadDefaults(t *testing.T) {
@@ -111,5 +112,14 @@ func TestLoadBotMode(t *testing.T) {
 	t.Setenv("BOT_MODE", "carrier-pigeon")
 	if _, err := Load(); err == nil {
 		t.Fatal("Load() с неизвестным BOT_MODE должен возвращать ошибку")
+	}
+}
+
+func TestLoadMissingScraperToken(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("CHANGEDETECTION_AUTH_TOKEN", "")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() без CHANGEDETECTION_AUTH_TOKEN должен возвращать ошибку")
 	}
 }
