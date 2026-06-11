@@ -50,16 +50,16 @@
 
 ---
 
-## 4. `feature/4-gitlab-ci` — Пайплайн CI
+## ✅ 4. `feature/4-gitlab-ci` — Пайплайн CI
 
 **Цель**: каждый следующий MR автоматически проверяется. Делаем рано, чтобы CI охранял всю последующую Go-разработку.
 
-- [ ] `.gitlab-ci.yml` со стадиями `lint` → `test` → `build`
-- [ ] `lint`: golangci-lint (alpine-образ)
-- [ ] `test`: `go test -v -race -cover ./...`
-- [ ] `build`: `docker build` для проверки Dockerfile
-- [ ] `workflow:rules`: запуск только на MR в `main` и на пуш в `main` (экономия минут)
-- [ ] В настройках GitLab включить «Pipelines must succeed» для merge
+- [x] `.gitlab-ci.yml` со стадиями `lint` → `test` → `build`
+- [x] `lint`: golangci-lint `v2.12.2-alpine` (v1.55 из ТЗ собран на Go 1.21 и несовместим с Go 1.26)
+- [x] `test`: `go test -v -race -cover ./...` на `golang:1.26` (не alpine: `-race` требует glibc)
+- [x] `build`: `docker build` для проверки Dockerfile (docker:27 + dind)
+- [x] `workflow:rules`: запуск только на MR в `main` и на пуш в `main` (экономия минут)
+- [ ] В настройках GitLab включить «Pipelines must succeed» для merge — **после слияния этого MR**
 
 **Готово, когда**: пайплайн зелёный на MR, не запускается на промежуточных ветках без MR.
 
