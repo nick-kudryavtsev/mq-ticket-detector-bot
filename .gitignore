@@ -9,6 +9,10 @@
 nginx/certs/*
 !nginx/certs/.gitkeep
 
+# ACME-челленджи certbot
+nginx/certbot/*
+!nginx/certbot/.gitkeep
+
 # Go (понадобится на следующих шагах)
 /bin/
 *.test

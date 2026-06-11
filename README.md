@@ -38,6 +38,37 @@ docker exec ticket_postgres psql -U ticket_bot -d ticket_bot \
 
 После этого шоу появится в `/shows` у всех авторизованных пользователей.
 
+## Nginx и SSL
+
+Весь внешний трафик идёт через nginx:443; наружу проксируется только
+`/telegram/webhook`. Сертификаты nginx читает из `nginx/certs/`
+(`fullchain.pem` + `privkey.pem`).
+
+**Локально** (самоподписанный, для проверки):
+
+```bash
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout nginx/certs/privkey.pem -out nginx/certs/fullchain.pem \
+  -days 365 -subj "/CN=localhost"
+```
+
+**На сервере** (Let's Encrypt, webroot-челлендж — порт 80 уже отдаёт
+`/.well-known/acme-challenge/` из `nginx/certbot/`):
+
+```bash
+docker run --rm \
+  -v "$PWD/nginx/certbot:/var/www/certbot" \
+  -v "$PWD/letsencrypt:/etc/letsencrypt" \
+  certbot/certbot certonly --webroot -w /var/www/certbot \
+  -d ваш-домен.ru --email admin@ваш-домен.ru --agree-tos --no-eff-email
+
+cp letsencrypt/live/ваш-домен.ru/fullchain.pem nginx/certs/
+cp letsencrypt/live/ваш-домен.ru/privkey.pem nginx/certs/
+docker compose restart nginx
+```
+
+Продление — тот же `certonly` по cron раз в месяц (Let's Encrypt живёт 90 дней).
+
 ## Вебхук скрейпера
 
 `POST /api/v1/trigger` принимает уведомления changedetection.io. Защита —
