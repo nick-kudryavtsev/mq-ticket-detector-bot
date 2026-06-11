@@ -6,17 +6,18 @@ import (
 	"time"
 )
 
-// setRequiredDBEnv задаёт обязательные переменные подключения к БД,
+// setRequiredEnv задаёт обязательные переменные,
 // без которых Load() осознанно падает.
-func setRequiredDBEnv(t *testing.T) {
+func setRequiredEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("POSTGRES_USER", "bot")
 	t.Setenv("POSTGRES_PASSWORD", "secret")
 	t.Setenv("POSTGRES_DB", "botdb")
+	t.Setenv("BOT_TOKEN", "123:abc")
 }
 
 func TestLoadDefaults(t *testing.T) {
-	setRequiredDBEnv(t)
+	setRequiredEnv(t)
 
 	cfg, err := Load()
 	if err != nil {
@@ -35,7 +36,7 @@ func TestLoadDefaults(t *testing.T) {
 }
 
 func TestLoadOverrides(t *testing.T) {
-	setRequiredDBEnv(t)
+	setRequiredEnv(t)
 	t.Setenv("HTTP_PORT", "9999")
 	t.Setenv("SHUTDOWN_TIMEOUT", "30s")
 	t.Setenv("POSTGRES_HOST", "db.example.com")
@@ -57,7 +58,7 @@ func TestLoadOverrides(t *testing.T) {
 }
 
 func TestLoadPasswordEscaping(t *testing.T) {
-	setRequiredDBEnv(t)
+	setRequiredEnv(t)
 	t.Setenv("POSTGRES_PASSWORD", "p@ss/w:rd")
 
 	cfg, err := Load()
@@ -70,7 +71,7 @@ func TestLoadPasswordEscaping(t *testing.T) {
 }
 
 func TestLoadMissingDBVars(t *testing.T) {
-	setRequiredDBEnv(t)
+	setRequiredEnv(t)
 	t.Setenv("POSTGRES_PASSWORD", "") // пустое значение = не задано
 
 	if _, err := Load(); err == nil {
@@ -79,10 +80,36 @@ func TestLoadMissingDBVars(t *testing.T) {
 }
 
 func TestLoadInvalidShutdownTimeout(t *testing.T) {
-	setRequiredDBEnv(t)
+	setRequiredEnv(t)
 	t.Setenv("SHUTDOWN_TIMEOUT", "не-длительность")
 
 	if _, err := Load(); err == nil {
 		t.Fatal("Load() с кривым SHUTDOWN_TIMEOUT должен возвращать ошибку")
+	}
+}
+
+func TestLoadMissingBotToken(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("BOT_TOKEN", "")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() без BOT_TOKEN должен возвращать ошибку")
+	}
+}
+
+func TestLoadBotMode(t *testing.T) {
+	setRequiredEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() вернул ошибку: %v", err)
+	}
+	if cfg.BotMode != BotModePolling {
+		t.Errorf("BotMode по умолчанию = %q, ожидается %q", cfg.BotMode, BotModePolling)
+	}
+
+	t.Setenv("BOT_MODE", "carrier-pigeon")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() с неизвестным BOT_MODE должен возвращать ошибку")
 	}
 }

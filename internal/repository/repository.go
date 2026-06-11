@@ -14,6 +14,7 @@ import (
 type Repository struct {
 	pool          *pgxpool.Pool
 	Users         *UserRepo
+	Invites       *InviteRepo
 	Shows         *ShowRepo
 	Subscriptions *SubscriptionRepo
 }
@@ -22,6 +23,7 @@ func New(pool *pgxpool.Pool) *Repository {
 	return &Repository{
 		pool:          pool,
 		Users:         &UserRepo{db: pool},
+		Invites:       &InviteRepo{db: pool},
 		Shows:         &ShowRepo{db: pool},
 		Subscriptions: &SubscriptionRepo{db: pool},
 	}
