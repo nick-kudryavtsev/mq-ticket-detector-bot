@@ -11,6 +11,7 @@ import (
 
 	"gitlab.com/kabanza/mq-ticket-detector/internal/config"
 	httpdelivery "gitlab.com/kabanza/mq-ticket-detector/internal/delivery/http"
+	"gitlab.com/kabanza/mq-ticket-detector/internal/repository"
 )
 
 func main() {
@@ -33,7 +34,19 @@ func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	srv := httpdelivery.NewServer(cfg.HTTPAddr, logger)
+	pool, err := repository.NewPool(ctx, cfg.DatabaseDSN)
+	if err != nil {
+		return err
+	}
+	// Закрывается ПОСЛЕ остановки HTTP-сервера (defer выполняется позже
+	// кода в конце run): к этому моменту запросов к БД уже нет.
+	defer func() {
+		pool.Close()
+		logger.Info("database pool closed")
+	}()
+	logger.Info("connected to postgres")
+
+	srv := httpdelivery.NewServer(cfg.HTTPAddr, logger, pool)
 
 	serverErr := make(chan error, 1)
 	go func() {
