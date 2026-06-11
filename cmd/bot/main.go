@@ -51,12 +51,13 @@ func run(logger *slog.Logger) error {
 
 	repos := repository.New(pool)
 	authSvc := service.NewAuth(repos, repos.Users, logger)
+	subsSvc := service.NewSubscriptions(repos.Shows, repos.Subscriptions, logger)
 
 	if cfg.BotMode != config.BotModePolling {
 		return fmt.Errorf("BOT_MODE=%s пока не реализован (появится на шаге вебхуков)", cfg.BotMode)
 	}
 
-	tgBot, err := telegram.New(cfg.BotToken, authSvc, logger)
+	tgBot, err := telegram.New(cfg.BotToken, authSvc, subsSvc, logger)
 	if err != nil {
 		return err
 	}
