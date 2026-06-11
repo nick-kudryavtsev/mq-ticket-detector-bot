@@ -20,16 +20,16 @@
 
 ---
 
-## 2. `feature/2-db-schema` — Схема БД и миграции
+## ✅ 2. `feature/2-db-schema` — Схема БД и миграции
 
 **Цель**: воспроизводимая схема PostgreSQL из ТЗ §4.
 
-- [ ] Выбрать и подключить инструмент миграций (`golang-migrate`)
-- [ ] Миграция `users`: telegram_id (BigInt PK), username, is_active (default true), updated_at
-- [ ] Миграция `invite_tokens`: id, token (unique), is_used (default false), created_at
-- [ ] Миграция `shows`: id, title, changedetection_label (unique), last_changed_at (nullable)
-- [ ] Миграция `subscriptions`: составной PK (user_id, show_id), FK с ON DELETE CASCADE
-- [ ] Запуск миграций при деплое (отдельный one-shot контейнер в compose)
+- [x] Выбрать и подключить инструмент миграций (`golang-migrate`)
+- [x] Миграция `users`: telegram_id (BigInt PK), username, is_active (default true), updated_at
+- [x] Миграция `invite_tokens`: id, token (unique), is_used (default false), created_at
+- [x] Миграция `shows`: id, title, changedetection_label (unique), last_changed_at (nullable)
+- [x] Миграция `subscriptions`: составной PK (user_id, show_id), FK с ON DELETE CASCADE
+- [x] Запуск миграций при деплое (отдельный one-shot контейнер в compose)
 
 **Готово, когда**: миграции применяются на чистую БД, `up`/`down` работают без ошибок.
 
