@@ -35,7 +35,7 @@ type handler struct {
 
 // New собирает бота: /start открыт для всех (это и есть вход по приглашению),
 // всё остальное — только для авторизованных через requireAuth.
-func New(token string, auth *service.Auth, subs *service.Subscriptions, log *slog.Logger) (*bot.Bot, error) {
+func New(ctx context.Context, token string, auth *service.Auth, subs *service.Subscriptions, log *slog.Logger) (*bot.Bot, error) {
 	h := &handler{auth: auth, subs: subs, log: log}
 
 	b, err := bot.New(token, bot.WithDefaultHandler(h.requireAuth(h.handleHelp)))
@@ -47,6 +47,17 @@ func New(token string, auth *service.Auth, subs *service.Subscriptions, log *slo
 		h.requireAuth(h.handleShows))
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackToggle, bot.MatchTypePrefix,
 		h.requireAuth(h.handleToggleShow))
+
+	// Меню команд (всплывающий список при вводе «/»). Ошибка не фатальна:
+	// меню — косметика, бот работает и без него.
+	_, err = b.SetMyCommands(ctx, &bot.SetMyCommandsParams{
+		Commands: []models.BotCommand{
+			{Command: "shows", Description: "Список шоу и управление подписками"},
+		},
+	})
+	if err != nil {
+		log.Warn("set bot commands", "error", err)
+	}
 
 	return b, nil
 }

@@ -57,7 +57,7 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("BOT_MODE=%s пока не реализован (появится на шаге вебхуков)", cfg.BotMode)
 	}
 
-	tgBot, err := telegram.New(cfg.BotToken, authSvc, subsSvc, logger)
+	tgBot, err := telegram.New(ctx, cfg.BotToken, authSvc, subsSvc, logger)
 	if err != nil {
 		return err
 	}
