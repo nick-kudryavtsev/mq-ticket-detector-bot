@@ -1,9 +1,9 @@
 // Package http собирает HTTP-сервер приложения: роутинг и таймауты.
-// Пока здесь только /healthz; эндпоинт /api/v1/trigger появится
-// на шаге интеграции со скрейпером.
+// Эндпоинт /api/v1/trigger появится на шаге интеграции со скрейпером.
 package http
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"time"
@@ -12,7 +12,13 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-func NewServer(addr string, logger *slog.Logger) *http.Server {
+// Pinger — то, что умеет проверить соединение с хранилищем (pgxpool.Pool).
+// Интерфейс держит пакет независимым от драйвера БД.
+type Pinger interface {
+	Ping(ctx context.Context) error
+}
+
+func NewServer(addr string, logger *slog.Logger, db Pinger) *http.Server {
 	r := chi.NewRouter()
 
 	// Recoverer: паника в хендлере отдаёт 500 и пишется в лог,
@@ -22,7 +28,10 @@ func NewServer(addr string, logger *slog.Logger) *http.Server {
 	// понадобится IP клиента, будем доверять заголовку только от nginx.
 	r.Use(middleware.Recoverer)
 
+	// liveness: процесс жив
 	r.Get("/healthz", handleHealthz)
+	// readiness: процесс жив И база отвечает
+	r.Get("/readyz", handleReadyz(logger, db))
 
 	// Сюда на шаге trigger-api добавится группа:
 	// r.Route("/api/v1", func(r chi.Router) { ... })
@@ -43,4 +52,20 @@ func handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok"))
+}
+
+func handleReadyz(logger *slog.Logger, db Pinger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+
+		if err := db.Ping(ctx); err != nil {
+			logger.Error("readiness probe failed", "error", err)
+			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ready"))
+	}
 }

@@ -65,16 +65,17 @@
 
 ---
 
-## 5. `feature/5-repository` — Слой доступа к данным
+## ✅ 5. `feature/5-repository` — Слой доступа к данным
 
 **Цель**: вся работа с PostgreSQL — через пул соединений и репозитории.
 
-- [ ] Пул соединений (`pgxpool` + `sqlx`, либо `gorm`), закрытие пула при shutdown
-- [ ] `UserRepository`: создать/активировать, деактивировать (is_active=false + updated_at), выбрать активных подписчиков шоу
-- [ ] `InviteTokenRepository`: проверить валидность, пометить использованным (в транзакции с созданием user)
-- [ ] `ShowRepository`: список шоу, поиск по changedetection_label, обновить last_changed_at
-- [ ] `SubscriptionRepository`: создать/удалить, проверить наличие
-- [ ] Unit-тесты репозиториев (testcontainers или дев-БД из compose)
+- [x] Пул соединений `pgxpool`, закрытие пула при shutdown (после остановки HTTP)
+- [x] `UserRepo`: UpsertActive (создание/реактивация), Deactivate, IsActive
+- [x] `RedeemInvite`: валидация + пометка токена и создание user в одной транзакции
+- [x] `ShowRepo`: ListWithSubscription (для клавиатуры /shows), MarkChanged (по label)
+- [x] `SubscriptionRepo`: Toggle (подписка/отписка), ActiveSubscriberIDs (для рассылки)
+- [x] Интеграционные тесты против дев-БД из compose (env-gated, в CI скипаются)
+- [x] Бонус: `/readyz` — readiness-проба с ping БД
 
 **Готово, когда**: `go test -race` зелёный, методы покрывают все сценарии ТЗ §1.
 
