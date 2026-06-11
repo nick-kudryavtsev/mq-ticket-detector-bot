@@ -41,7 +41,7 @@
 
 - [x] `go.mod`, структура: `/cmd/bot/main.go`, `/internal/config`, `/internal/repository`, `/internal/service`, `/internal/delivery/http`
 - [x] Чтение конфигурации из переменных окружения (`.env`)
-- [x] HTTP-сервер (`net/http`, stdlib-роутер Go 1.22+) с эндпоинтом `/healthz`
+- [x] HTTP-сервер на `go-chi` (middleware RealIP, Recoverer) с эндпоинтом `/healthz`
 - [x] Graceful shutdown: перехват SIGINT/SIGTERM, корректное закрытие сервера
 - [x] Multi-stage Dockerfile (builder → distroless), образ 14MB
 - [x] Замена alpine-заглушки в `docker-compose.yml` на `build: .`
