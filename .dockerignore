@@ -1,0 +1,10 @@
+# Не тащим в build context лишнее — быстрее сборка, нет утечки секретов в образ
+.git
+.idea
+.env
+.env.example
+nginx/
+prometheus/
+migrations/
+*.md
+docker-compose.yml
