@@ -1,0 +1,15 @@
+# Секреты — никогда не коммитим
+.env
+
+# IDE
+.idea/
+.vscode/
+
+# SSL-сертификаты
+nginx/certs/*
+!nginx/certs/.gitkeep
+
+# Go (понадобится на следующих шагах)
+/bin/
+*.test
+coverage.out

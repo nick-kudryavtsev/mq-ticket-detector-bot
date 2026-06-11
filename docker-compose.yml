@@ -1,0 +1,153 @@
+# ==========================================
+# СЕТЕВАЯ ТОПОЛОГИЯ (Раздел 2 ТЗ)
+# ==========================================
+networks:
+  external_web:
+    driver: bridge # Имеет доступ в интернет (для скрейпинга и Telegram API)
+  internal_db:
+    driver: bridge
+    internal: true # ПОЛНОСТЬЮ изолирована от интернета (безопасность БД)
+
+# ==========================================
+# ПОСТОЯННОЕ ХРАНИЛИЩЕ ДАННЫХ (Раздел 2 ТЗ)
+# ==========================================
+volumes:
+  postgres_data:    # Хранилище для данных пользователей и подписок
+  changedet_data:   # Хранилище для настроек и истории скрейпера
+  prometheus_data:  # Хранилище для метрик
+  grafana_data:     # Хранилище для дашбордов и настроек Grafana
+
+# ==========================================
+# ОПИСАНИЕ СЕРВИСОВ
+# ==========================================
+services:
+
+  # 1. Reverse Proxy (Раздел 3 ТЗ)
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: ticket_nginx
+    restart: always
+    ports:
+      - "80:80"   # Для проверки домена и выпуска SSL
+      - "443:443" # Для безопасного приема вебхуков от Telegram
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro # Папка с SSL-сертификатами Let's Encrypt
+    networks:
+      - external_web # Доступен извне, передает трафик внутрь
+    depends_on:
+      - go_backend
+
+  # 2. Go-Бэкенд и Бот (Раздел 5 ТЗ)
+  # TODO(шаг N): заменить заглушку на сборку из Dockerfile:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  go_backend:
+    image: alpine:3.20 # ВРЕМЕННАЯ заглушка для проверки сетевого каркаса
+    command: sleep infinity
+    container_name: ticket_go_backend
+    restart: always
+    # Порты "8000:8000" НАРУЖУ НЕ ВЫСТАВЛЯЕМ. Доступ только через Nginx.
+    env_file:
+      - .env # Загрузка токенов и паролей из локального файла
+    networks:
+      - external_web # Нужен для отправки уведомлений в Telegram API
+      - internal_db  # Нужен для безопасной связи с PostgreSQL
+    depends_on:
+      postgres_db:
+        condition: service_healthy # Не стартуем, пока БД не готова принимать соединения
+
+  # 3. База данных PostgreSQL (Раздел 4 ТЗ)
+  postgres_db:
+    image: postgres:15-alpine
+    container_name: ticket_postgres
+    restart: always
+    # Порты "5432:5432" наружу НЕ выставляем. Доступ закрыт для всего интернета.
+    env_file:
+      - .env # Считывает POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - internal_db # База находится в полностью изолированной сети
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # 4. Внешний скрейпер (Раздел 1 и 2 ТЗ)
+  changedetection:
+    image: dgtlmoon/changedetection.io:0.45.20
+    container_name: ticket_changedetection
+    restart: always
+    # Веб-интерфейс доступен ТОЛЬКО с localhost сервера (через SSH-туннель).
+    # Наружу порт не торчит — весь внешний трафик обязан идти через Nginx.
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - changedet_data:/datastore
+    networks:
+      - external_web # Нужен интернет, чтобы проверять сайт Medium Quality
+    environment:
+      - BASE_URL=http://changedetection:5000
+
+  # 5. Метрики железа сервера (Раздел 6 ТЗ)
+  node_exporter:
+    image: prom/node-exporter:v1.8.0
+    container_name: ticket_node_exporter
+    restart: unless-stopped
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+    deploy:
+      resources:
+        limits:
+          memory: 50M # Жесткий лимит памяти из ТЗ
+    networks:
+      - internal_db # Доступен только для Prometheus
+
+  # 6. Сборщик метрик Prometheus (Раздел 6 ТЗ)
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: ticket_prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=2d' # Автоудаление метрик старше 48 часов
+    deploy:
+      resources:
+        limits:
+          memory: 400M # Жесткий лимит памяти из ТЗ
+    networks:
+      - internal_db
+    depends_on:
+      - node_exporter
+
+  # 7. Визуализация метрик Grafana (Раздел 6 ТЗ)
+  grafana:
+    image: grafana/grafana-oss:10.4.1
+    container_name: ticket_grafana
+    restart: unless-stopped
+    # Порт наружу не публикуем: сеть internal_db изолирована, и published-порты
+    # на ней всё равно не работают. Доступ к панели — через SSH-туннель
+    # или через Nginx (решим на шаге настройки мониторинга).
+    volumes:
+      - grafana_data:/var/lib/grafana
+    deploy:
+      resources:
+        limits:
+          memory: 300M # Жесткий лимит памяти из ТЗ
+    networks:
+      - internal_db
+    depends_on:
+      - prometheus
