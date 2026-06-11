@@ -1,0 +1,9 @@
+# Конфигурация Prometheus (Раздел 6 ТЗ)
+global:
+  scrape_interval: 15s # Интервал сбора метрик из ТЗ
+
+scrape_configs:
+  - job_name: node_exporter
+    static_configs:
+      - targets:
+          - node_exporter:9100 # Имя сервиса резолвится внутри сети internal_db
