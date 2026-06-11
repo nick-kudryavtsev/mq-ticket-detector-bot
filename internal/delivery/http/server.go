@@ -18,7 +18,10 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
-func NewServer(addr string, logger *slog.Logger, db Pinger, trigger TriggerService, scraperSecret string) *http.Server {
+// NewServer собирает HTTP-сервер. tgWebhook — обработчик апдейтов Telegram
+// (nil в polling-режиме, тогда маршрут не монтируется); подлинность апдейтов
+// он проверяет сам по X-Telegram-Bot-Api-Secret-Token.
+func NewServer(addr string, logger *slog.Logger, db Pinger, trigger TriggerService, scraperSecret string, tgWebhook http.HandlerFunc) *http.Server {
 	r := chi.NewRouter()
 
 	// Recoverer: паника в хендлере отдаёт 500 и пишется в лог,
@@ -38,6 +41,12 @@ func NewServer(addr string, logger *slog.Logger, db Pinger, trigger TriggerServi
 		api.Use(requireScraperAuth(logger, scraperSecret))
 		api.Post("/trigger", handleTrigger(logger, trigger))
 	})
+
+	// Вебхук Telegram (BOT_MODE=webhook): nginx проксирует сюда
+	// запросы с https://<домен>/telegram/webhook
+	if tgWebhook != nil {
+		r.Post("/telegram/webhook", tgWebhook)
+	}
 
 	return &http.Server{
 		Addr:    addr,

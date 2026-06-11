@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -25,6 +26,12 @@ type Config struct {
 	// ChangedetectionAuthToken — секрет заголовка X-Changedetection-Auth,
 	// которым скрейпер авторизуется на /api/v1/trigger (ТЗ §3.2).
 	ChangedetectionAuthToken string
+	// WebhookURL — публичный HTTPS-адрес вебхука бота, который
+	// регистрируется в Telegram (только BOT_MODE=webhook).
+	WebhookURL string
+	// TelegramWebhookSecret — значение X-Telegram-Bot-Api-Secret-Token:
+	// Telegram шлёт его с каждым апдейтом, бот отбрасывает чужие запросы.
+	TelegramWebhookSecret string
 }
 
 const (
@@ -67,6 +74,18 @@ func Load() (Config, error) {
 	if cfg.ChangedetectionAuthToken == "" {
 		// Пустой секрет означал бы открытый наружу эндпоинт рассылки
 		return Config{}, fmt.Errorf("required env CHANGEDETECTION_AUTH_TOKEN is not set")
+	}
+
+	// Параметры вебхука обязательны только в webhook-режиме
+	cfg.WebhookURL = os.Getenv("WEBHOOK_URL")
+	cfg.TelegramWebhookSecret = os.Getenv("TELEGRAM_WEBHOOK_SECRET")
+	if cfg.BotMode == BotModeWebhook {
+		if !strings.HasPrefix(cfg.WebhookURL, "https://") {
+			return Config{}, fmt.Errorf("BOT_MODE=webhook требует WEBHOOK_URL вида https://... , получено %q", cfg.WebhookURL)
+		}
+		if cfg.TelegramWebhookSecret == "" {
+			return Config{}, fmt.Errorf("BOT_MODE=webhook требует TELEGRAM_WEBHOOK_SECRET")
+		}
 	}
 
 	return cfg, nil

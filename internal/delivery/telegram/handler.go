@@ -35,10 +35,17 @@ type handler struct {
 
 // New собирает бота: /start открыт для всех (это и есть вход по приглашению),
 // всё остальное — только для авторизованных через requireAuth.
-func New(ctx context.Context, token string, auth *service.Auth, subs *service.Subscriptions, log *slog.Logger) (*bot.Bot, error) {
+// webhookSecret непустой только в webhook-режиме: встроенный обработчик
+// библиотеки сверяет с ним X-Telegram-Bot-Api-Secret-Token каждого апдейта.
+func New(ctx context.Context, token, webhookSecret string, auth *service.Auth, subs *service.Subscriptions, log *slog.Logger) (*bot.Bot, error) {
 	h := &handler{auth: auth, subs: subs, log: log}
 
-	b, err := bot.New(token, bot.WithDefaultHandler(h.requireAuth(h.handleHelp)))
+	opts := []bot.Option{bot.WithDefaultHandler(h.requireAuth(h.handleHelp))}
+	if webhookSecret != "" {
+		opts = append(opts, bot.WithWebhookSecretToken(webhookSecret))
+	}
+
+	b, err := bot.New(token, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("init telegram bot: %w", err)
 	}

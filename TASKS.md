@@ -135,13 +135,14 @@
 
 ---
 
-## 10. `feature/10-bot-webhook-mode` — Режим webhook для бота
+## ✅ 10. `feature/10-bot-webhook-mode` — Режим webhook для бота
 
 **Цель**: ТЗ §5.2: на сервере бот получает обновления через вебхук, а не polling.
 
-- [ ] Переключатель `BOT_MODE=polling|webhook`
-- [ ] Регистрация вебхука при старте, валидация `X-Telegram-Bot-Api-Secret-Token`
-- [ ] Удаление вебхука из Telegram при graceful shutdown
+- [x] Переключатель `BOT_MODE=polling|webhook` (+ `WEBHOOK_URL`, `TELEGRAM_WEBHOOK_SECRET` обязательны в webhook)
+- [x] Регистрация вебхука при старте, валидация `X-Telegram-Bot-Api-Secret-Token` (встроена в библиотеку)
+- [x] Удаление вебхука при shutdown (ретраи + обход бага lib v1.21 с пустыми params) и перед polling
+- [x] `stop_grace_period: 30s` — Docker не убивает процесс до конца graceful-цепочки
 
 **Готово, когда**: в режиме webhook сообщения доходят через nginx; в polling — без nginx (локально).
 

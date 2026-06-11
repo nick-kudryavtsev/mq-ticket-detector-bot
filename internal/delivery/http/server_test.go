@@ -36,7 +36,7 @@ func (f *fakeTrigger) Trigger(_ context.Context, label string) (service.TriggerR
 
 func serve(t *testing.T, db Pinger, trigger TriggerService, req *http.Request) *httptest.ResponseRecorder {
 	t.Helper()
-	srv := NewServer(":0", slog.New(slog.DiscardHandler), db, trigger, testSecret)
+	srv := NewServer(":0", slog.New(slog.DiscardHandler), db, trigger, testSecret, nil)
 	rec := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rec, req)
 	return rec
@@ -153,5 +153,28 @@ func TestTriggerBadBody(t *testing.T) {
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: статус %d, ожидается 400", name, rec.Code)
 		}
+	}
+}
+
+func TestTelegramWebhookRoute(t *testing.T) {
+	called := false
+	hook := func(w http.ResponseWriter, _ *http.Request) { called = true; w.WriteHeader(http.StatusOK) }
+
+	srv := NewServer(":0", slog.New(slog.DiscardHandler), fakePinger{}, &fakeTrigger{}, testSecret, hook)
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/telegram/webhook", nil))
+
+	if !called || rec.Code != http.StatusOK {
+		t.Fatalf("вебхук не вызван: called=%v, code=%d", called, rec.Code)
+	}
+}
+
+func TestTelegramWebhookRouteAbsentInPolling(t *testing.T) {
+	srv := NewServer(":0", slog.New(slog.DiscardHandler), fakePinger{}, &fakeTrigger{}, testSecret, nil)
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/telegram/webhook", nil))
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("в polling-режиме маршрут должен отсутствовать: code=%d", rec.Code)
 	}
 }

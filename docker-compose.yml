@@ -46,6 +46,9 @@ services:
       dockerfile: Dockerfile
     container_name: ticket_go_backend
     restart: always
+    # Запас на graceful shutdown: дослать пачку рассылки, закрыть пул,
+    # снять вебхук (дефолтные 10s Docker прерывают процесс SIGKILL-ом)
+    stop_grace_period: 30s
     # Порты "8000:8000" НАРУЖУ НЕ ВЫСТАВЛЯЕМ. Доступ только через Nginx.
     env_file:
       - .env # Загрузка токенов и паролей из локального файла

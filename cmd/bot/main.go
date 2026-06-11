@@ -3,12 +3,12 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"gitlab.com/kabanza/mq-ticket-detector/internal/config"
 	httpdelivery "gitlab.com/kabanza/mq-ticket-detector/internal/delivery/http"
@@ -41,23 +41,16 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	// Закрывается ПОСЛЕ остановки HTTP-сервера (defer выполняется позже
-	// кода в конце run): к этому моменту запросов к БД уже нет.
-	defer func() {
-		pool.Close()
-		logger.Info("database pool closed")
-	}()
+	// Страховка на ранние выходы по ошибке; штатное закрытие — явное,
+	// в конце run (повторный Close безопасен: pgxpool использует sync.Once).
+	defer pool.Close()
 	logger.Info("connected to postgres")
 
 	repos := repository.New(pool)
 	authSvc := service.NewAuth(repos, repos.Users, logger)
 	subsSvc := service.NewSubscriptions(repos.Shows, repos.Subscriptions, logger)
 
-	if cfg.BotMode != config.BotModePolling {
-		return fmt.Errorf("BOT_MODE=%s пока не реализован (появится на шаге вебхуков)", cfg.BotMode)
-	}
-
-	tgBot, err := telegram.New(ctx, cfg.BotToken, authSvc, subsSvc, logger)
+	tgBot, err := telegram.New(ctx, cfg.BotToken, cfg.TelegramWebhookSecret, authSvc, subsSvc, logger)
 	if err != nil {
 		return err
 	}
@@ -67,15 +60,36 @@ func run(logger *slog.Logger) error {
 		repos.Shows, repos.Subscriptions, repos.Users,
 		telegram.NewSender(tgBot), logger)
 
-	// Поллинг останавливается отменой того же ctx, что и весь процесс
+	// Цикл обработки апдейтов останавливается отменой того же ctx,
+	// что и весь процесс. В webhook-режиме апдейты приходят через
+	// наш HTTP-сервер, в polling бот опрашивает Telegram сам (ТЗ §5.2).
+	var tgWebhook http.HandlerFunc
 	botDone := make(chan struct{})
-	go func() {
-		defer close(botDone)
-		logger.Info("telegram bot polling started")
-		tgBot.Start(ctx)
-	}()
+	switch cfg.BotMode {
+	case config.BotModeWebhook:
+		if err := telegram.SetupWebhook(ctx, tgBot, cfg.WebhookURL, cfg.TelegramWebhookSecret); err != nil {
+			return err
+		}
+		logger.Info("telegram webhook registered", "url", cfg.WebhookURL)
+		tgWebhook = tgBot.WebhookHandler()
+		go func() {
+			defer close(botDone)
+			tgBot.StartWebhook(ctx)
+		}()
+	default: // polling
+		// Защита от хвоста webhook-режима: активный вебхук
+		// конфликтует с getUpdates (Telegram отвечает 409)
+		if err := telegram.RemoveWebhook(ctx, tgBot); err != nil {
+			logger.Warn("remove stale webhook", "error", err)
+		}
+		go func() {
+			defer close(botDone)
+			logger.Info("telegram bot polling started")
+			tgBot.Start(ctx)
+		}()
+	}
 
-	srv := httpdelivery.NewServer(cfg.HTTPAddr, logger, pool, notifier, cfg.ChangedetectionAuthToken)
+	srv := httpdelivery.NewServer(cfg.HTTPAddr, logger, pool, notifier, cfg.ChangedetectionAuthToken, tgWebhook)
 
 	serverErr := make(chan error, 1)
 	go func() {
@@ -110,6 +124,20 @@ func run(logger *slog.Logger) error {
 
 	<-botDone
 	logger.Info("telegram bot stopped")
+
+	// Порядок из ТЗ §5.4: закрыть пул БД, затем удалить вебхук из Telegram
+	pool.Close()
+	logger.Info("database pool closed")
+
+	if cfg.BotMode == config.BotModeWebhook {
+		delCtx, delCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer delCancel()
+		if err := telegram.RemoveWebhook(delCtx, tgBot); err != nil {
+			logger.Error("delete telegram webhook", "error", err)
+		} else {
+			logger.Info("telegram webhook deleted")
+		}
+	}
 
 	if firstErr != nil {
 		return firstErr

@@ -123,3 +123,36 @@ func TestLoadMissingScraperToken(t *testing.T) {
 		t.Fatal("Load() без CHANGEDETECTION_AUTH_TOKEN должен возвращать ошибку")
 	}
 }
+
+func TestLoadWebhookModeRequirements(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("BOT_MODE", "webhook")
+
+	// без WEBHOOK_URL и секрета — ошибка
+	if _, err := Load(); err == nil {
+		t.Fatal("webhook-режим без WEBHOOK_URL должен возвращать ошибку")
+	}
+
+	t.Setenv("WEBHOOK_URL", "http://insecure.example.com/hook")
+	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "s3cret")
+	if _, err := Load(); err == nil {
+		t.Fatal("WEBHOOK_URL без https должен возвращать ошибку")
+	}
+
+	t.Setenv("WEBHOOK_URL", "https://bot.example.com/telegram/webhook")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("валидный webhook-конфиг: %v", err)
+	}
+	if cfg.WebhookURL != "https://bot.example.com/telegram/webhook" || cfg.TelegramWebhookSecret != "s3cret" {
+		t.Fatalf("конфиг вебхука не прочитан: %+v", cfg)
+	}
+
+	// в polling-режиме эти переменные не обязательны
+	t.Setenv("BOT_MODE", "polling")
+	t.Setenv("WEBHOOK_URL", "")
+	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "")
+	if _, err := Load(); err != nil {
+		t.Fatalf("polling без webhook-переменных должен работать: %v", err)
+	}
+}
