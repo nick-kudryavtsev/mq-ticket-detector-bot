@@ -26,6 +26,18 @@ docker compose up -d   # вся инфраструктура + миграции 
 5. Откройте ссылку в Telegram и нажмите Start. Бот пускает только
    по валидной одноразовой ссылке; `/start` без неё отвечает отказом.
 
+## Управление шоу
+
+Шоу добавляются вручную; `changedetection_label` должен совпадать с тегом
+`notification_tags` в настройках скрейпера:
+
+```bash
+docker exec ticket_postgres psql -U ticket_bot -d ticket_bot \
+  -c "INSERT INTO shows (title, changedetection_label) VALUES ('Стендап', 'show_standup');"
+```
+
+После этого шоу появится в `/shows` у всех авторизованных пользователей.
+
 ## Разработка
 
 ```bash
