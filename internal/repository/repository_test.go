@@ -37,10 +37,9 @@ func setup(t *testing.T) (*repository.Repository, *pgxpool.Pool) {
 	return repository.New(pool), pool
 }
 
-func insertToken(t *testing.T, pool *pgxpool.Pool, token string) {
+func insertToken(t *testing.T, repo *repository.Repository, token string) {
 	t.Helper()
-	if _, err := pool.Exec(context.Background(),
-		`INSERT INTO invite_tokens (token) VALUES ($1)`, token); err != nil {
+	if err := repo.Invites.Create(context.Background(), token); err != nil {
 		t.Fatalf("вставка токена: %v", err)
 	}
 }
@@ -57,9 +56,9 @@ func insertShow(t *testing.T, pool *pgxpool.Pool, title, label string) int64 {
 }
 
 func TestRedeemInvite(t *testing.T) {
-	repo, pool := setup(t)
+	repo, _ := setup(t)
 	ctx := context.Background()
-	insertToken(t, pool, "tok-1")
+	insertToken(t, repo, "tok-1")
 
 	ok, err := repo.RedeemInvite(ctx, "tok-1", 100, "alice")
 	if err != nil {

@@ -17,7 +17,17 @@ type Config struct {
 	// DatabaseDSN — строка подключения к PostgreSQL, собирается
 	// из тех же POSTGRES_*-переменных, что использует сам контейнер БД.
 	DatabaseDSN string
+	// BotToken — токен Telegram-бота от BotFather. Обязателен:
+	// без него приложение не имеет смысла, падаем сразу.
+	BotToken string
+	// BotMode — polling (локальная разработка) или webhook (сервер).
+	BotMode string
 }
+
+const (
+	BotModePolling = "polling"
+	BotModeWebhook = "webhook"
+)
 
 func Load() (Config, error) {
 	cfg := Config{
@@ -39,7 +49,24 @@ func Load() (Config, error) {
 	}
 	cfg.DatabaseDSN = dsn
 
+	cfg.BotToken = os.Getenv("BOT_TOKEN")
+	if cfg.BotToken == "" {
+		return Config{}, fmt.Errorf("required env BOT_TOKEN is not set")
+	}
+
+	cfg.BotMode = getEnv("BOT_MODE", BotModePolling)
+	if cfg.BotMode != BotModePolling && cfg.BotMode != BotModeWebhook {
+		return Config{}, fmt.Errorf("BOT_MODE must be %q or %q, got %q",
+			BotModePolling, BotModeWebhook, cfg.BotMode)
+	}
+
 	return cfg, nil
+}
+
+// DatabaseDSNFromEnv отдаёт только DSN БД — для утилит вроде invitegen,
+// которым не нужен токен бота и прочая конфигурация.
+func DatabaseDSNFromEnv() (string, error) {
+	return databaseDSN()
 }
 
 func databaseDSN() (string, error) {

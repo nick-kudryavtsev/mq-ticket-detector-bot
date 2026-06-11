@@ -12,7 +12,8 @@ COPY . .
 
 # CGO_ENABLED=0 — статический бинарник без libc;
 # -s -w — отрезаем отладочные таблицы, образ меньше
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /bot ./cmd/bot
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /bot ./cmd/bot && \
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o /invitegen ./cmd/invitegen
 
 # --- Этап 2: рантайм ---
 # distroless/static: нет shell и пакетного менеджера (минимальная поверхность
@@ -21,6 +22,9 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /bot ./cmd/bot
 FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=builder /bot /bot
+# Админская утилита генерации инвайтов:
+#   docker compose run --rm --entrypoint /invitegen go_backend -n 5
+COPY --from=builder /invitegen /invitegen
 
 EXPOSE 8000
 

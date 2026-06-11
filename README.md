@@ -11,6 +11,21 @@ cp .env.example .env   # заполнить значения
 docker compose up -d   # вся инфраструктура + миграции применяются автоматически
 ```
 
+## Telegram-бот
+
+1. Создайте бота у [@BotFather](https://t.me/BotFather) (`/newbot`), скопируйте токен.
+2. В `.env` заполните `BOT_TOKEN` и `BOT_USERNAME` (юзернейм без `@`).
+   Без `BOT_TOKEN` приложение сознательно не стартует.
+3. Пересоберите бэкенд: `docker compose up -d --build go_backend`.
+4. Сгенерируйте пригласительные ссылки:
+
+   ```bash
+   docker compose run --rm --entrypoint /invitegen go_backend -n 5
+   ```
+
+5. Откройте ссылку в Telegram и нажмите Start. Бот пускает только
+   по валидной одноразовой ссылке; `/start` без неё отвечает отказом.
+
 ## Разработка
 
 ```bash
