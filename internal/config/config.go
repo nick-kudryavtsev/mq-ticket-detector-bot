@@ -32,6 +32,9 @@ type Config struct {
 	// TelegramWebhookSecret — значение X-Telegram-Bot-Api-Secret-Token:
 	// Telegram шлёт его с каждым апдейтом, бот отбрасывает чужие запросы.
 	TelegramWebhookSecret string
+	// NotifyCooldown — окно подавления повторных рассылок одного шоу
+	// (страница может «шуметь» после старта продаж). 0 — без подавления.
+	NotifyCooldown time.Duration
 }
 
 const (
@@ -51,6 +54,20 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("parse SHUTDOWN_TIMEOUT: %w", err)
 		}
 		cfg.ShutdownTimeout = d
+	}
+
+	// 0 (по умолчанию) — каждое зафиксированное изменение уходит подписчикам:
+	// в целевой нише правка страницы и старт продаж разделены секундами.
+	cfg.NotifyCooldown = 0
+	if raw := os.Getenv("NOTIFY_COOLDOWN"); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse NOTIFY_COOLDOWN (например 24h, 30m, 0): %w", err)
+		}
+		if d < 0 {
+			return Config{}, fmt.Errorf("NOTIFY_COOLDOWN не может быть отрицательным: %s", raw)
+		}
+		cfg.NotifyCooldown = d
 	}
 
 	dsn, err := databaseDSN()

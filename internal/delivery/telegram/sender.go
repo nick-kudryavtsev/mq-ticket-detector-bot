@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 
 	"gitlab.com/kabanza/mq-ticket-detector/internal/service"
 )
@@ -19,11 +20,21 @@ func NewSender(b *bot.Bot) *Sender {
 	return &Sender{b: b}
 }
 
-// SendNotification шлёт текст пользователю в личку. Ответ Telegram
-// 403 Forbidden (пользователь заблокировал бота или удалил чат)
-// транслируется в service.ErrBlockedByUser — сценарий 3 ТЗ.
-func (s *Sender) SendNotification(ctx context.Context, telegramID int64, text string) error {
-	_, err := s.b.SendMessage(ctx, &bot.SendMessageParams{ChatID: telegramID, Text: text})
+// SendNotification шлёт текст пользователю в личку; при непустом url
+// прикрепляет кнопку-ссылку на страницу шоу. Ответ Telegram 403 Forbidden
+// (пользователь заблокировал бота или удалил чат) транслируется
+// в service.ErrBlockedByUser — сценарий 3 ТЗ.
+func (s *Sender) SendNotification(ctx context.Context, telegramID int64, text, url string) error {
+	params := &bot.SendMessageParams{ChatID: telegramID, Text: text}
+	if url != "" {
+		params.ReplyMarkup = &models.InlineKeyboardMarkup{
+			InlineKeyboard: [][]models.InlineKeyboardButton{{
+				{Text: "🎟 Открыть страницу", URL: url},
+			}},
+		}
+	}
+
+	_, err := s.b.SendMessage(ctx, params)
 	if err == nil {
 		return nil
 	}

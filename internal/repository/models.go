@@ -13,6 +13,7 @@ type Show struct {
 	ID                   int64
 	Title                string
 	ChangedetectionLabel string
+	URL                  string     // страница покупки; пустая — кнопки в уведомлении нет
 	LastChangedAt        *time.Time // nil, пока изменений ещё не было
 }
 

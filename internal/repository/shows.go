@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -39,19 +40,26 @@ func (r *ShowRepo) ListWithSubscription(ctx context.Context, telegramID int64) (
 }
 
 // MarkChanged обновляет last_changed_at шоу по метке скрейпера и возвращает
-// его (сценарий 2 ТЗ, шаг 5). found=false — метка в базе не зарегистрирована.
-func (r *ShowRepo) MarkChanged(ctx context.Context, label string) (Show, bool, error) {
+// шоу вместе с ПРЕДЫДУЩИМ значением штампа — по нему сервис решает,
+// не слишком ли часто страница «шумит» (анти-спам).
+// found=false — метка в базе не зарегистрирована.
+//
+// Подзапрос в RETURNING читает таблицу в снапшоте на начало стейтмента,
+// то есть отдаёт значение ДО обновления.
+func (r *ShowRepo) MarkChanged(ctx context.Context, label string) (show Show, prev *time.Time, found bool, err error) {
 	var s Show
-	err := r.db.QueryRow(ctx, `
+	var prevChanged *time.Time
+	err = r.db.QueryRow(ctx, `
 		UPDATE shows SET last_changed_at = NOW()
 		WHERE changedetection_label = $1
-		RETURNING id, title, changedetection_label, last_changed_at`,
-		label).Scan(&s.ID, &s.Title, &s.ChangedetectionLabel, &s.LastChangedAt)
+		RETURNING id, title, changedetection_label, COALESCE(url, ''), last_changed_at,
+		          (SELECT s2.last_changed_at FROM shows s2 WHERE s2.changedetection_label = $1)`,
+		label).Scan(&s.ID, &s.Title, &s.ChangedetectionLabel, &s.URL, &s.LastChangedAt, &prevChanged)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Show{}, false, nil
+		return Show{}, nil, false, nil
 	}
 	if err != nil {
-		return Show{}, false, fmt.Errorf("mark show %q changed: %w", label, err)
+		return Show{}, nil, false, fmt.Errorf("mark show %q changed: %w", label, err)
 	}
-	return s, true, nil
+	return s, prevChanged, true, nil
 }

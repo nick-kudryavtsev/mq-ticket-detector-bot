@@ -72,10 +72,16 @@ func handleTrigger(logger *slog.Logger, svc TriggerService) http.HandlerFunc {
 			return
 		}
 
+		status := "accepted"
+		if result.Suppressed {
+			// изменение учтено (last_changed_at обновлён), но рассылка
+			// подавлена анти-спам окном
+			status = "suppressed"
+		}
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted) // рассылка пошла асинхронно
+		w.WriteHeader(http.StatusAccepted) // обработано; рассылка асинхронна
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status":      "accepted",
+			"status":      status,
 			"show":        result.ShowTitle,
 			"subscribers": result.Subscribers,
 		})

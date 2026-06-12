@@ -19,7 +19,7 @@ import (
 var ErrBlockedByUser = errors.New("bot blocked by user")
 
 type ShowMarker interface {
-	MarkChanged(ctx context.Context, label string) (repository.Show, bool, error)
+	MarkChanged(ctx context.Context, label string) (show repository.Show, prev *time.Time, found bool, err error)
 }
 
 type SubscriberLister interface {
@@ -31,13 +31,18 @@ type UserDeactivator interface {
 }
 
 type MessageSender interface {
-	SendNotification(ctx context.Context, telegramID int64, text string) error
+	// url непустой — к сообщению прикрепляется кнопка-ссылка на страницу шоу.
+	SendNotification(ctx context.Context, telegramID int64, text, url string) error
 }
 
 // TriggerResult — ответ вебхуку: что нашли и скольким будем слать.
 type TriggerResult struct {
 	ShowTitle   string
 	Subscribers int
+	// Suppressed — изменение зафиксировано (last_changed_at обновлён),
+	// но рассылка не запускалась: предыдущее срабатывание было слишком
+	// недавно (анти-спам, окно cooldown).
+	Suppressed bool
 }
 
 // Notifier — сценарии 2 и 3 ТЗ: веерная рассылка уведомлений пулом горутин
@@ -52,6 +57,7 @@ type Notifier struct {
 	workers    int
 	limiter    *rate.Limiter
 	sendWindow time.Duration
+	cooldown   time.Duration // минимальная пауза между рассылками одного шоу
 
 	wg sync.WaitGroup // активные рассылки; Wait() ждёт их при shutdown
 }
@@ -68,6 +74,12 @@ func WithSendRate(perSecond float64, burst int) NotifierOption {
 	return func(nf *Notifier) { nf.limiter = rate.NewLimiter(rate.Limit(perSecond), burst) }
 }
 
+// WithCooldown задаёт окно подавления повторных рассылок одного шоу.
+// 0 отключает анти-спам.
+func WithCooldown(d time.Duration) NotifierOption {
+	return func(nf *Notifier) { nf.cooldown = d }
+}
+
 func NewNotifier(shows ShowMarker, subs SubscriberLister, users UserDeactivator,
 	sender MessageSender, log *slog.Logger, opts ...NotifierOption) *Notifier {
 	n := &Notifier{
@@ -81,6 +93,10 @@ func NewNotifier(shows ShowMarker, subs SubscriberLister, users UserDeactivator,
 		// Глобальный лимит Telegram ~30 msg/s; держимся ниже с запасом.
 		limiter:    rate.NewLimiter(25, 25),
 		sendWindow: 5 * time.Minute,
+		// По умолчанию ВЫКЛЮЧЕН: в нише Medium Quality «мусорная» правка
+		// страницы и старт продаж разделены секундами — подавлять нельзя
+		// ничего. Включается опцией для шумных страниц вне ниши.
+		cooldown: 0,
 	}
 	for _, opt := range opts {
 		opt(n)
@@ -91,10 +107,21 @@ func NewNotifier(shows ShowMarker, subs SubscriberLister, users UserDeactivator,
 // Trigger — сценарий 2 ТЗ: обновляет last_changed_at шоу по метке скрейпера
 // и запускает асинхронную рассылку активным подписчикам.
 // found=false — метка не зарегистрирована в таблице shows.
+//
+// Анти-спам: если предыдущее срабатывание этого шоу было меньше cooldown
+// назад, рассылка подавляется — «шумная» страница (новости, реклама,
+// мелкие правки после старта продаж) даёт одно уведомление, а не поток.
 func (n *Notifier) Trigger(ctx context.Context, label string) (TriggerResult, bool, error) {
-	show, found, err := n.shows.MarkChanged(ctx, label)
+	show, prev, found, err := n.shows.MarkChanged(ctx, label)
 	if err != nil || !found {
 		return TriggerResult{}, found, err
+	}
+
+	if n.cooldown > 0 && prev != nil && time.Since(*prev) < n.cooldown {
+		n.log.Info("trigger suppressed by cooldown",
+			"label", label, "show", show.Title,
+			"previous_change", prev.Format(time.RFC3339), "cooldown", n.cooldown.String())
+		return TriggerResult{ShowTitle: show.Title, Suppressed: true}, true, nil
 	}
 
 	ids, err := n.subs.ActiveSubscriberIDs(ctx, show.ID)
@@ -116,15 +143,15 @@ func (n *Notifier) Trigger(ctx context.Context, label string) (TriggerResult, bo
 		defer n.wg.Done()
 		bctx, cancel := context.WithTimeout(context.Background(), n.sendWindow)
 		defer cancel()
-		n.broadcast(bctx, show.Title, ids)
+		n.broadcast(bctx, show, ids)
 	}()
 
 	return result, true, nil
 }
 
 // broadcast веером раздаёт ids пулу из workers горутин (ТЗ §5.3).
-func (n *Notifier) broadcast(ctx context.Context, title string, ids []int64) {
-	text := fmt.Sprintf("🔥 Внимание! Стартовали продажи билетов на %s!", title)
+func (n *Notifier) broadcast(ctx context.Context, show repository.Show, ids []int64) {
+	text := fmt.Sprintf("🔥 Внимание! Стартовали продажи билетов на %s!", show.Title)
 
 	jobs := make(chan int64)
 	var sent, blocked, failed atomic.Int64
@@ -139,7 +166,7 @@ func (n *Notifier) broadcast(ctx context.Context, title string, ids []int64) {
 					failed.Add(1)
 					continue // ctx истёк — дочитываем канал без отправки
 				}
-				err := n.sender.SendNotification(ctx, id, text)
+				err := n.sender.SendNotification(ctx, id, text, show.URL)
 				switch {
 				case errors.Is(err, ErrBlockedByUser):
 					// Сценарий 3 ТЗ: пользователь заблокировал бота —
@@ -166,7 +193,7 @@ func (n *Notifier) broadcast(ctx context.Context, title string, ids []int64) {
 	close(jobs)
 	wg.Wait()
 
-	n.log.Info("broadcast finished", "show", title,
+	n.log.Info("broadcast finished", "show", show.Title,
 		"sent", sent.Load(), "blocked", blocked.Load(), "failed", failed.Load())
 }
 

@@ -156,3 +156,27 @@ func TestLoadWebhookModeRequirements(t *testing.T) {
 		t.Fatalf("polling без webhook-переменных должен работать: %v", err)
 	}
 }
+
+func TestLoadNotifyCooldown(t *testing.T) {
+	setRequiredEnv(t)
+
+	cfg, err := Load()
+	if err != nil || cfg.NotifyCooldown != 0 {
+		t.Fatalf("дефолтный cooldown: %v, err=%v, ожидается 0 (выключен)", cfg.NotifyCooldown, err)
+	}
+
+	t.Setenv("NOTIFY_COOLDOWN", "30m")
+	if cfg, err = Load(); err != nil || cfg.NotifyCooldown != 30*time.Minute {
+		t.Fatalf("NOTIFY_COOLDOWN=30m: %v, err=%v", cfg.NotifyCooldown, err)
+	}
+
+	t.Setenv("NOTIFY_COOLDOWN", "0")
+	if cfg, err = Load(); err != nil || cfg.NotifyCooldown != 0 {
+		t.Fatalf("NOTIFY_COOLDOWN=0: %v, err=%v", cfg.NotifyCooldown, err)
+	}
+
+	t.Setenv("NOTIFY_COOLDOWN", "-5m")
+	if _, err = Load(); err == nil {
+		t.Fatal("отрицательный NOTIFY_COOLDOWN должен возвращать ошибку")
+	}
+}

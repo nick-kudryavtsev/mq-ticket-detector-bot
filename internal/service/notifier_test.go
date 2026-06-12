@@ -14,11 +14,12 @@ import (
 
 type fakeMarker struct {
 	show  repository.Show
+	prev  *time.Time // предыдущий last_changed_at (для cooldown)
 	found bool
 }
 
-func (f *fakeMarker) MarkChanged(context.Context, string) (repository.Show, bool, error) {
-	return f.show, f.found, nil
+func (f *fakeMarker) MarkChanged(context.Context, string) (repository.Show, *time.Time, bool, error) {
+	return f.show, f.prev, f.found, nil
 }
 
 type fakeSubscribers struct {
@@ -46,11 +47,12 @@ func (f *fakeDeactivator) Deactivate(_ context.Context, id int64) error {
 type fakeSender struct {
 	mu        sync.Mutex
 	sent      []int64
+	urls      []string
 	blockedID int64
 	failID    int64
 }
 
-func (f *fakeSender) SendNotification(_ context.Context, id int64, _ string) error {
+func (f *fakeSender) SendNotification(_ context.Context, id int64, _ string, url string) error {
 	if id == f.blockedID {
 		return ErrBlockedByUser
 	}
@@ -60,6 +62,7 @@ func (f *fakeSender) SendNotification(_ context.Context, id int64, _ string) err
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sent = append(f.sent, id)
+	f.urls = append(f.urls, url)
 	return nil
 }
 
@@ -119,6 +122,69 @@ func TestTriggerUnknownLabel(t *testing.T) {
 	waitNotifier(t, n)
 	if len(sender.sent) != 0 {
 		t.Errorf("рассылка по неизвестной метке: %v", sender.sent)
+	}
+}
+
+// Cooldown: недавнее предыдущее срабатывание подавляет рассылку,
+// давнее и нулевой cooldown — нет.
+func TestTriggerCooldown(t *testing.T) {
+	recent := time.Now().Add(-time.Minute)
+	old := time.Now().Add(-48 * time.Hour)
+	show := repository.Show{ID: 1, Title: "Стендап"}
+
+	cases := []struct {
+		name       string
+		prev       *time.Time
+		cooldown   time.Duration
+		suppressed bool
+	}{
+		{"первое срабатывание", nil, 24 * time.Hour, false},
+		{"недавнее — подавляется", &recent, 24 * time.Hour, true},
+		{"давнее — проходит", &old, 24 * time.Hour, false},
+		{"cooldown выключен", &recent, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sender := &fakeSender{}
+			n := NewNotifier(&fakeMarker{show: show, prev: tc.prev, found: true},
+				&fakeSubscribers{ids: []int64{100}}, &fakeDeactivator{}, sender,
+				slog.New(slog.DiscardHandler),
+				WithWorkers(2), WithSendRate(100000, 1000), WithCooldown(tc.cooldown))
+
+			res, found, err := n.Trigger(context.Background(), "show_standup")
+			if err != nil || !found {
+				t.Fatalf("Trigger: found=%v, err=%v", found, err)
+			}
+			if res.Suppressed != tc.suppressed {
+				t.Fatalf("Suppressed = %v, ожидается %v", res.Suppressed, tc.suppressed)
+			}
+			waitNotifier(t, n)
+			wantSent := 1
+			if tc.suppressed {
+				wantSent = 0
+			}
+			if len(sender.sent) != wantSent {
+				t.Fatalf("отправлено %d, ожидается %d", len(sender.sent), wantSent)
+			}
+		})
+	}
+}
+
+// URL шоу доезжает до отправителя (кнопка-ссылка в уведомлении).
+func TestTriggerPassesShowURL(t *testing.T) {
+	marker := &fakeMarker{
+		show:  repository.Show{ID: 1, Title: "ПВН", URL: "https://example.com/pvn"},
+		found: true,
+	}
+	sender := &fakeSender{}
+	n := newTestNotifier(marker, &fakeSubscribers{ids: []int64{100}}, &fakeDeactivator{}, sender)
+
+	if _, _, err := n.Trigger(context.Background(), "pvn"); err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	waitNotifier(t, n)
+	if len(sender.urls) != 1 || sender.urls[0] != "https://example.com/pvn" {
+		t.Fatalf("url у отправителя = %v, ожидается ссылка шоу", sender.urls)
 	}
 }
 

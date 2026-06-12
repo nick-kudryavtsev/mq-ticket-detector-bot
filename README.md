@@ -35,10 +35,13 @@ docker compose up -d   # вся инфраструктура + миграции 
 
 ```bash
 docker exec ticket_postgres psql -U ticket_bot -d ticket_bot \
-  -c "INSERT INTO shows (title, changedetection_label) VALUES ('Стендап', 'show_standup');"
+  -c "INSERT INTO shows (title, changedetection_label, url) \
+      VALUES ('Стендап', 'show_standup', 'https://mediumquality.ru/standup');"
 ```
 
 Шоу сразу появится в `/shows` у всех авторизованных пользователей.
+`url` — страница покупки: она прикрепляется к уведомлению кнопкой
+«🎟 Открыть страницу» (NULL — уведомление без кнопки).
 
 **Шаг 2.** Watch в changedetection.io (см. следующий раздел).
 
@@ -84,6 +87,19 @@ curl -X POST http://localhost:5001/api/v1/watch \
 **Важно про кодировку**: если сайт отдаёт `Content-Type` без `charset`,
 кириллический триггер-текст может не совпасть (страница декодируется
 как latin-1). Реальные сайты обычно отдают charset корректно.
+
+**Группы (tags) в changedetection в интеграции не участвуют** — это просто
+папки для организации watch-ей. Метка шоу передаётся только через
+`:notification_tags=...` в notification-URL. Правило: один watch = одно
+шоу = свой URL со своей меткой.
+
+**Анти-дребезг (опционально)**: `NOTIFY_COOLDOWN` подавляет повторные
+рассылки одного шоу внутри окна (окно скользящее, `last_changed_at`
+обновляется на каждое срабатывание). **По умолчанию выключен (`0`)**:
+в целевой нише Medium Quality «мусорная» правка страницы и старт продаж
+разделены секундами, поэтому подписчик должен получать каждое изменение
+и проверять страницу сам. Включайте (например `30m`) только для шумных
+страниц вне основной ниши — иначе рискуете подавить настоящий старт.
 
 ## Nginx и SSL
 
@@ -152,19 +168,28 @@ docker run --rm -v "$PWD":/app -w /app \
 
 ### Интеграционные тесты репозиториев
 
-Гоняются против дев-БД из compose. Сеть `internal_db` изолирована от интернета,
-поэтому контейнер с тестами получает кеш Go-модулей с хоста:
+Гоняются против ОТДЕЛЬНОЙ тестовой БД `ticket_bot_test` (тесты очищают
+таблицы, поэтому дев-базу с реальными подписками не трогаем). Разовая
+подготовка:
 
 ```bash
-docker compose up -d postgres_db migrator
+docker exec ticket_postgres createdb -U ticket_bot ticket_bot_test
+set -a; source .env; set +a
+docker compose run --rm migrator -path=/migrations \
+  -database="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres_db:5432/ticket_bot_test?sslmode=disable" up
+```
 
+Сеть `internal_db` изолирована от интернета, поэтому контейнер с тестами
+получает кеш Go-модулей с хоста:
+
+```bash
 docker run --rm \
   --network mq-ticket-detector_internal_db \
   -v "$PWD":/app -w /app \
   -v "$(go env GOMODCACHE)":/go/pkg/mod \
   -e GOTOOLCHAIN=local -e GOFLAGS=-buildvcs=false \
-  -e TEST_DATABASE_DSN='postgres://ticket_bot:<пароль из .env>@postgres_db:5432/ticket_bot?sslmode=disable' \
+  -e TEST_DATABASE_DSN='postgres://ticket_bot:<пароль из .env>@postgres_db:5432/ticket_bot_test?sslmode=disable' \
   golang:1.26 go test -v -race -count=1 ./internal/repository/
 ```
 
-**Внимание**: тесты очищают таблицы (`TRUNCATE`) — только для дев-БД.
+После изменения миграций повторите команду `migrator ... up` для тестовой БД.

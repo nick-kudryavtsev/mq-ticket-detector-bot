@@ -58,7 +58,8 @@ func run(logger *slog.Logger) error {
 	// Сценарии 2 и 3 ТЗ: веерная рассылка и обработка блокировок
 	notifier := service.NewNotifier(
 		repos.Shows, repos.Subscriptions, repos.Users,
-		telegram.NewSender(tgBot), logger)
+		telegram.NewSender(tgBot), logger,
+		service.WithCooldown(cfg.NotifyCooldown))
 
 	// Цикл обработки апдейтов останавливается отменой того же ctx,
 	// что и весь процесс. В webhook-режиме апдейты приходят через

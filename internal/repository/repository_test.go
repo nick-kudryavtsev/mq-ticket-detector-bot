@@ -163,23 +163,42 @@ func TestMarkChanged(t *testing.T) {
 	repo, pool := setup(t)
 	ctx := context.Background()
 	insertShow(t, pool, "Стендап", "show_standup")
+	if _, err := pool.Exec(ctx,
+		`UPDATE shows SET url = 'https://example.com/standup' WHERE changedetection_label = 'show_standup'`); err != nil {
+		t.Fatalf("установка url: %v", err)
+	}
 
 	before := time.Now().Add(-time.Second)
-	show, found, err := repo.Shows.MarkChanged(ctx, "show_standup")
+	show, prev, found, err := repo.Shows.MarkChanged(ctx, "show_standup")
 	if err != nil {
 		t.Fatalf("MarkChanged: %v", err)
 	}
 	if !found {
 		t.Fatal("зарегистрированная метка не найдена")
 	}
-	if show.Title != "Стендап" {
-		t.Errorf("Title = %q, ожидается %q", show.Title, "Стендап")
+	if show.Title != "Стендап" || show.URL != "https://example.com/standup" {
+		t.Errorf("show = %+v, ожидается Стендап с url", show)
 	}
 	if show.LastChangedAt == nil || show.LastChangedAt.Before(before) {
 		t.Errorf("LastChangedAt = %v, ожидается свежий штамп", show.LastChangedAt)
 	}
+	if prev != nil {
+		t.Errorf("prev = %v, до первого срабатывания должен быть nil", prev)
+	}
 
-	if _, found, _ := repo.Shows.MarkChanged(ctx, "unknown_label"); found {
+	// второе срабатывание: prev — штамп первого
+	show2, prev2, _, err := repo.Shows.MarkChanged(ctx, "show_standup")
+	if err != nil {
+		t.Fatalf("повторный MarkChanged: %v", err)
+	}
+	if prev2 == nil || !prev2.Equal(*show.LastChangedAt) {
+		t.Errorf("prev = %v, ожидается штамп первого срабатывания %v", prev2, show.LastChangedAt)
+	}
+	if !show2.LastChangedAt.After(*show.LastChangedAt) {
+		t.Errorf("новый штамп %v не позже предыдущего %v", show2.LastChangedAt, show.LastChangedAt)
+	}
+
+	if _, _, found, _ := repo.Shows.MarkChanged(ctx, "unknown_label"); found {
 		t.Fatal("незарегистрированная метка нашлась")
 	}
 }
