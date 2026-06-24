@@ -177,7 +177,20 @@
 
 ---
 
-## 13. `feature/13-monitoring` — Grafana и дашборды
+## ✅ 13. `feature/13-headless-browser` — Браузер для JS-страниц + фикс лимита тела
+
+**Цель**: мониторить JS-виджеты билетных систем (intickets.ru); чинить потерю крупных вебхуков.
+
+- [x] `sockpuppetbrowser` (Playwright) в стеке, `PLAYWRIGHT_DRIVER_URL` у скрейпера, лимит 768 МБ
+- [x] UA-override для intickets.ru (обходит 403 на headless-Chrome), задокументирован в README
+- [x] **Фикс:** лимит тела `/api/v1/trigger` 4КБ→1МБ — крупные диффы (KRD с блоком согласия) рвали JSON и давали 400, рассылка не шла
+- [x] Регрессионный тест на большое тело
+
+**Готово, когда**: KRD-watch (intickets.ru) даёт реальную рассылку в Telegram (проверено: `sent:1`).
+
+---
+
+## 14. `feature/14-monitoring` — Grafana и дашборды
 
 **Цель**: ТЗ §6: наблюдаемость сервера.
 

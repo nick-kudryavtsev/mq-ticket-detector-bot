@@ -115,6 +115,28 @@ services:
       - external_web # Нужен интернет, чтобы проверять сайт Medium Quality
     environment:
       - BASE_URL=http://changedetection:5000
+      # JS-страницы (виджеты билетных систем, напр. intickets.ru) рендерит
+      # отдельный браузер. Watch с fetch backend «Chrome» ходит сюда.
+      - PLAYWRIGHT_DRIVER_URL=ws://sockpuppetbrowser:3000
+    depends_on:
+      - sockpuppetbrowser
+
+  # 4.1. Headless-браузер для JS-страниц (опционально, см. README).
+  # Обычные HTML-страницы (Tilda, mediumquality.ru) браузера НЕ требуют —
+  # он нужен только для watch-ей с динамической подгрузкой контента.
+  sockpuppetbrowser:
+    image: dgtlmoon/sockpuppetbrowser:0.0.3 # лёгкий Playwright-браузер от автора changedetection
+    container_name: ticket_sockpuppetbrowser
+    hostname: sockpuppetbrowser
+    restart: unless-stopped
+    cap_add:
+      - SYS_ADMIN # нужен Chrome для песочницы рендеринга
+    networks:
+      - external_web # сам загружает целевые страницы → нужен интернет
+    deploy:
+      resources:
+        limits:
+          memory: 768M # Chrome прожорлив; рендерит одну страницу за раз. Поднять, если рендер падает по OOM
 
   # 5. Метрики железа сервера (Раздел 6 ТЗ)
   node_exporter:

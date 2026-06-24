@@ -93,6 +93,17 @@ curl -X POST http://localhost:5001/api/v1/watch \
 `:notification_tags=...` в notification-URL. Правило: один watch = одно
 шоу = свой URL со своей меткой.
 
+**JS-страницы (виджеты билетных систем, напр. intickets.ru)**: их контент
+подгружается JavaScript-ом, обычный HTTP видит пустую оболочку. Для таких
+watch-ей в стеке есть `sockpuppetbrowser` (headless-Chrome) — у watch-а
+ставится fetch backend «Chrome/Javascript». Обычным HTML-страницам (Tilda,
+mediumquality.ru) браузер не нужен, они работают на «Plain HTTP».
+Браузер прожорлив (лимит 768 МБ) — поднимайте его только при реальной
+надобности. Некоторые виджеты (intickets.ru) отдают 403 на headless-Chrome:
+лечится переопределением User-Agent на реальный браузер в настройках watch-а
+(Request → Headers). Эти настройки живут в volume `changedet_data`, в git
+их нет — при пересоздании скрейпера с нуля их нужно задать заново.
+
 **Анти-дребезг (опционально)**: `NOTIFY_COOLDOWN` подавляет повторные
 рассылки одного шоу внутри окна (окно скользящее, `last_changed_at`
 обновляется на каждое срабатывание). **По умолчанию выключен (`0`)**:
