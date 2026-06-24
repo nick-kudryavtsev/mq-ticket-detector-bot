@@ -142,6 +142,26 @@ func TestTriggerUnknownLabel(t *testing.T) {
 	}
 }
 
+// Регрессия: changedetection шлёт полный дифф страницы в поле message
+// (десятки КБ). Большое валидное тело должно парситься, а не обрезаться.
+func TestTriggerLargeBody(t *testing.T) {
+	trigger := &fakeTrigger{
+		result: service.TriggerResult{ShowTitle: "Натальная карта", Subscribers: 1},
+		found:  true,
+	}
+	bigMessage := strings.Repeat("Согласие на обработку персональных данных. ", 1000) // ~80 КБ
+	body := `{"version":"1.0","title":"t","message":"` + bigMessage + `","notification_tags":"krd"}`
+
+	rec := postTrigger(t, trigger, testSecret, body)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("большое тело: статус %d, ожидается 202", rec.Code)
+	}
+	if trigger.gotLbl != "krd" {
+		t.Errorf("метка из большого тела = %q, ожидается krd", trigger.gotLbl)
+	}
+}
+
 func TestTriggerBadBody(t *testing.T) {
 	for name, body := range map[string]string{
 		"кривой json": `{не json`,

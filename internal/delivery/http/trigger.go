@@ -16,6 +16,13 @@ import (
 // changedetection.io (ТЗ §3.2).
 const HeaderScraperAuth = "X-Changedetection-Auth"
 
+// maxTriggerBodyBytes — потолок тела вебхука. changedetection кладёт в поле
+// message ПОЛНЫЙ дифф страницы (может быть в десятки КБ, кириллица в UTF-8 —
+// по 2 байта на символ). Нам из тела нужен только notification_tags, но
+// распарсить надо весь JSON, иначе он обрежется на середине и Decode упадёт.
+// 1 МБ с запасом; эндпоинт под авторизацией и доступен лишь из docker-сети.
+const maxTriggerBodyBytes = 1 << 20
+
 // TriggerService запускает рассылку по метке шоу.
 type TriggerService interface {
 	Trigger(ctx context.Context, label string) (service.TriggerResult, bool, error)
@@ -46,8 +53,7 @@ func requireScraperAuth(logger *slog.Logger, secret string) func(http.Handler) h
 func handleTrigger(logger *slog.Logger, svc TriggerService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req triggerRequest
-		// Лимит на тело: вебхук — это пара коротких полей, не файл
-		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil {
+		if err := json.NewDecoder(io.LimitReader(r.Body, maxTriggerBodyBytes)).Decode(&req); err != nil {
 			http.Error(w, "invalid json body", http.StatusBadRequest)
 			return
 		}
