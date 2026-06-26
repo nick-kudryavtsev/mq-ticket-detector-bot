@@ -23,14 +23,16 @@ func (f fakePinger) Ping(context.Context) error { return f.err }
 
 // fakeTrigger подменяет сервис рассылки.
 type fakeTrigger struct {
-	result service.TriggerResult
-	found  bool
-	err    error
-	gotLbl string
+	result  service.TriggerResult
+	found   bool
+	err     error
+	gotLbl  string
+	gotText string
 }
 
-func (f *fakeTrigger) Trigger(_ context.Context, label string) (service.TriggerResult, bool, error) {
+func (f *fakeTrigger) Trigger(_ context.Context, label, changeText string) (service.TriggerResult, bool, error) {
 	f.gotLbl = label
+	f.gotText = changeText
 	return f.result, f.found, f.err
 }
 
@@ -131,6 +133,19 @@ func TestTriggerOK(t *testing.T) {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("в ответе нет %s: %s", want, body)
 		}
+	}
+}
+
+func TestTriggerPassesMessage(t *testing.T) {
+	trigger := &fakeTrigger{result: service.TriggerResult{ShowTitle: "КРАСНОДАР"}, found: true}
+	rec := postTrigger(t, trigger, testSecret,
+		`{"notification_tags":"krd","message":"(added) 1 000 ₽"}`)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("статус %d, ожидается 202", rec.Code)
+	}
+	if trigger.gotText != "(added) 1 000 ₽" {
+		t.Errorf("в сервис пришёл текст %q, ожидается дифф из message", trigger.gotText)
 	}
 }
 

@@ -66,8 +66,13 @@ docker exec ticket_postgres psql -U ticket_bot -d ticket_bot \
    - `json://` — POST по http (внутри docker-сети, в интернет не выходит);
    - `+Имя=значение` добавляет HTTP-заголовок (авторизация на бэкенде);
    - `:notification_tags=...` добавляет поле в JSON-тело — бэкенд найдёт
-     шоу по этой метке. Title/Body можно оставить любыми: бэкенд читает
-     только `notification_tags`.
+     шоу по этой метке.
+
+5. Поле **Notification Body** — задаёт, что попадёт в текст уведомления.
+   Поставьте `{{diff_added}}` (только добавленные строки диффа): бэкенд
+   возьмёт из него **первые 600 символов** и покажет под заголовком шоу.
+   Пустой Body → уведомление без блока изменений (только «🔥 …» + кнопка).
+   Title бэкенд игнорирует.
 
 Кнопка **Send test notification** на вкладке Notifications дёргает боевую
 рассылку — все подписчики шоу получат уведомление, удобно для проверки.
@@ -81,6 +86,7 @@ curl -X POST http://localhost:5001/api/v1/watch \
        "title": "Стендап",
        "time_between_check": {"seconds": 60},
        "trigger_text": ["Билеты в продаже"],
+       "notification_body": "{{diff_added}}",
        "notification_urls": ["json://go_backend:8000/api/v1/trigger?+X-Changedetection-Auth=<секрет>&:notification_tags=show_standup"]}'
 ```
 

@@ -25,12 +25,15 @@ const maxTriggerBodyBytes = 1 << 20
 
 // TriggerService запускает рассылку по метке шоу.
 type TriggerService interface {
-	Trigger(ctx context.Context, label string) (service.TriggerResult, bool, error)
+	Trigger(ctx context.Context, label, changeText string) (service.TriggerResult, bool, error)
 }
 
-// triggerRequest — тело вебхука: {"notification_tags": "show_standup"}.
+// triggerRequest — тело вебхука. notification_tags — метка шоу; message —
+// дифф со скрейпера (Body=`{{diff_added}}`), первые символы которого
+// уходят в текст уведомления.
 type triggerRequest struct {
 	NotificationTags string `json:"notification_tags"`
+	Message          string `json:"message"`
 }
 
 // requireScraperAuth мгновенно отвечает 403 при отсутствии или несовпадении
@@ -64,7 +67,7 @@ func handleTrigger(logger *slog.Logger, svc TriggerService) http.HandlerFunc {
 			return
 		}
 
-		result, found, err := svc.Trigger(r.Context(), label)
+		result, found, err := svc.Trigger(r.Context(), label, req.Message)
 		if err != nil {
 			logger.Error("trigger", "label", label, "error", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)

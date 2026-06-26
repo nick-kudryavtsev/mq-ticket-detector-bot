@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,6 +18,11 @@ import (
 // ErrBlockedByUser — Telegram ответил 403: пользователь заблокировал бота
 // или удалил чат. Адаптер отправки транслирует ошибку библиотеки в эту.
 var ErrBlockedByUser = errors.New("bot blocked by user")
+
+// maxChangeTextRunes — сколько символов диффа со скрейпера показываем
+// в уведомлении. Считаем в рунах, а не байтах: кириллица в UTF-8 —
+// 2 байта на символ, обрезка по байтам разрезала бы символ пополам.
+const maxChangeTextRunes = 600
 
 type ShowMarker interface {
 	MarkChanged(ctx context.Context, label string) (show repository.Show, prev *time.Time, found bool, err error)
@@ -111,7 +117,10 @@ func NewNotifier(shows ShowMarker, subs SubscriberLister, users UserDeactivator,
 // Анти-спам: если предыдущее срабатывание этого шоу было меньше cooldown
 // назад, рассылка подавляется — «шумная» страница (новости, реклама,
 // мелкие правки после старта продаж) даёт одно уведомление, а не поток.
-func (n *Notifier) Trigger(ctx context.Context, label string) (TriggerResult, bool, error) {
+// changeText — дифф со скрейпера (поле message вебхука); первые
+// maxChangeTextRunes символов уходят в тело уведомления. Пустая строка —
+// уведомление без блока изменений.
+func (n *Notifier) Trigger(ctx context.Context, label, changeText string) (TriggerResult, bool, error) {
 	show, prev, found, err := n.shows.MarkChanged(ctx, label)
 	if err != nil || !found {
 		return TriggerResult{}, found, err
@@ -143,15 +152,18 @@ func (n *Notifier) Trigger(ctx context.Context, label string) (TriggerResult, bo
 		defer n.wg.Done()
 		bctx, cancel := context.WithTimeout(context.Background(), n.sendWindow)
 		defer cancel()
-		n.broadcast(bctx, show, ids)
+		n.broadcast(bctx, show, changeText, ids)
 	}()
 
 	return result, true, nil
 }
 
 // broadcast веером раздаёт ids пулу из workers горутин (ТЗ §5.3).
-func (n *Notifier) broadcast(ctx context.Context, show repository.Show, ids []int64) {
+func (n *Notifier) broadcast(ctx context.Context, show repository.Show, changeText string, ids []int64) {
 	text := fmt.Sprintf("🔥 Внимание! Стартовали продажи билетов на %s!", show.Title)
+	if body := truncateRunes(changeText, maxChangeTextRunes); body != "" {
+		text += "\n\n" + body
+	}
 
 	jobs := make(chan int64)
 	var sent, blocked, failed atomic.Int64
@@ -195,6 +207,17 @@ func (n *Notifier) broadcast(ctx context.Context, show repository.Show, ids []in
 
 	n.log.Info("broadcast finished", "show", show.Title,
 		"sent", sent.Load(), "blocked", blocked.Load(), "failed", failed.Load())
+}
+
+// truncateRunes обрезает строку до max рун (не байт) и ставит «…», если
+// что-то отрезали. Пустую/пробельную строку возвращает как "".
+func truncateRunes(s string, max int) string {
+	s = strings.TrimSpace(s)
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return strings.TrimSpace(string(r[:max])) + "…"
 }
 
 // Wait блокируется до завершения всех активных рассылок — вызывается

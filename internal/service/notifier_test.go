@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -48,11 +49,12 @@ type fakeSender struct {
 	mu        sync.Mutex
 	sent      []int64
 	urls      []string
+	texts     []string
 	blockedID int64
 	failID    int64
 }
 
-func (f *fakeSender) SendNotification(_ context.Context, id int64, _ string, url string) error {
+func (f *fakeSender) SendNotification(_ context.Context, id int64, text, url string) error {
 	if id == f.blockedID {
 		return ErrBlockedByUser
 	}
@@ -63,6 +65,7 @@ func (f *fakeSender) SendNotification(_ context.Context, id int64, _ string, url
 	defer f.mu.Unlock()
 	f.sent = append(f.sent, id)
 	f.urls = append(f.urls, url)
+	f.texts = append(f.texts, text)
 	return nil
 }
 
@@ -93,7 +96,7 @@ func TestTriggerFanout(t *testing.T) {
 
 	n := newTestNotifier(marker, &fakeSubscribers{ids: ids}, deact, sender)
 
-	res, found, err := n.Trigger(context.Background(), "show_standup")
+	res, found, err := n.Trigger(context.Background(), "show_standup", "")
 	if err != nil || !found {
 		t.Fatalf("Trigger: found=%v, err=%v", found, err)
 	}
@@ -115,7 +118,7 @@ func TestTriggerUnknownLabel(t *testing.T) {
 	sender := &fakeSender{}
 	n := newTestNotifier(&fakeMarker{found: false}, &fakeSubscribers{}, &fakeDeactivator{}, sender)
 
-	_, found, err := n.Trigger(context.Background(), "nope")
+	_, found, err := n.Trigger(context.Background(), "nope", "")
 	if err != nil || found {
 		t.Fatalf("неизвестная метка: found=%v, err=%v", found, err)
 	}
@@ -151,7 +154,7 @@ func TestTriggerCooldown(t *testing.T) {
 				slog.New(slog.DiscardHandler),
 				WithWorkers(2), WithSendRate(100000, 1000), WithCooldown(tc.cooldown))
 
-			res, found, err := n.Trigger(context.Background(), "show_standup")
+			res, found, err := n.Trigger(context.Background(), "show_standup", "")
 			if err != nil || !found {
 				t.Fatalf("Trigger: found=%v, err=%v", found, err)
 			}
@@ -179,7 +182,7 @@ func TestTriggerPassesShowURL(t *testing.T) {
 	sender := &fakeSender{}
 	n := newTestNotifier(marker, &fakeSubscribers{ids: []int64{100}}, &fakeDeactivator{}, sender)
 
-	if _, _, err := n.Trigger(context.Background(), "pvn"); err != nil {
+	if _, _, err := n.Trigger(context.Background(), "pvn", ""); err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
 	waitNotifier(t, n)
@@ -188,12 +191,55 @@ func TestTriggerPassesShowURL(t *testing.T) {
 	}
 }
 
+// Дифф со скрейпера попадает в текст уведомления под заголовком шоу.
+func TestTriggerIncludesChangeText(t *testing.T) {
+	marker := &fakeMarker{show: repository.Show{ID: 1, Title: "КРАСНОДАР"}, found: true}
+	sender := &fakeSender{}
+	n := newTestNotifier(marker, &fakeSubscribers{ids: []int64{100}}, &fakeDeactivator{}, sender)
+
+	if _, _, err := n.Trigger(context.Background(), "krd", "(added) 1 000 ₽"); err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	waitNotifier(t, n)
+
+	if len(sender.texts) != 1 {
+		t.Fatalf("отправок %d, ожидается 1", len(sender.texts))
+	}
+	got := sender.texts[0]
+	if !strings.Contains(got, "КРАСНОДАР") || !strings.Contains(got, "(added) 1 000 ₽") {
+		t.Errorf("текст не содержит заголовок и дифф: %q", got)
+	}
+}
+
+// Длинный дифф обрезается по рунам (кириллица), а не по байтам.
+func TestTriggerTruncatesChangeText(t *testing.T) {
+	marker := &fakeMarker{show: repository.Show{ID: 1, Title: "Шоу"}, found: true}
+	sender := &fakeSender{}
+	n := newTestNotifier(marker, &fakeSubscribers{ids: []int64{100}}, &fakeDeactivator{}, sender)
+
+	long := strings.Repeat("я", 1000) // 1000 рун = 2000 байт
+	if _, _, err := n.Trigger(context.Background(), "krd", long); err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	waitNotifier(t, n)
+
+	body := sender.texts[0]
+	runes := []rune(body)
+	// заголовок + перевод строки + 600 рун диффа + «…»
+	if cnt := strings.Count(body, "я"); cnt != maxChangeTextRunes {
+		t.Errorf("символов диффа %d, ожидается %d", cnt, maxChangeTextRunes)
+	}
+	if !strings.HasSuffix(body, "…") {
+		t.Errorf("обрезанный текст должен оканчиваться на «…»: %q", string(runes[len(runes)-10:]))
+	}
+}
+
 func TestTriggerNoSubscribers(t *testing.T) {
 	marker := &fakeMarker{show: repository.Show{ID: 1, Title: "Стендап"}, found: true}
 	sender := &fakeSender{}
 	n := newTestNotifier(marker, &fakeSubscribers{}, &fakeDeactivator{}, sender)
 
-	res, found, err := n.Trigger(context.Background(), "show_standup")
+	res, found, err := n.Trigger(context.Background(), "show_standup", "")
 	if err != nil || !found {
 		t.Fatalf("Trigger: found=%v, err=%v", found, err)
 	}
