@@ -160,7 +160,10 @@ func (n *Notifier) Trigger(ctx context.Context, label, changeText string) (Trigg
 
 // broadcast веером раздаёт ids пулу из workers горутин (ТЗ §5.3).
 func (n *Notifier) broadcast(ctx context.Context, show repository.Show, changeText string, ids []int64) {
-	text := fmt.Sprintf("🔥 Внимание! Стартовали продажи билетов на %s!", show.Title)
+	// Нейтральный заголовок: скрейпер ловит ЛЮБОЕ изменение страницы, а не
+	// строго старт продаж (в отличие от буквального текста ТЗ §5.3). Что
+	// именно поменялось — видно из тела диффа ниже и по кнопке-ссылке.
+	text := fmt.Sprintf("🔔 Обновление на странице шоу «%s»", show.Title)
 	if body := truncateRunes(changeText, maxChangeTextRunes); body != "" {
 		text += "\n\n" + body
 	}

@@ -209,6 +209,13 @@ func TestTriggerIncludesChangeText(t *testing.T) {
 	if !strings.Contains(got, "КРАСНОДАР") || !strings.Contains(got, "(added) 1 000 ₽") {
 		t.Errorf("текст не содержит заголовок и дифф: %q", got)
 	}
+	// Заголовок — нейтральный «обновление», а не утверждение о старте продаж.
+	if !strings.Contains(got, "Обновление на странице") {
+		t.Errorf("нет нейтрального заголовка: %q", got)
+	}
+	if strings.Contains(got, "Стартовали продажи") {
+		t.Errorf("вернулся старый заголовок с обещанием продаж: %q", got)
+	}
 }
 
 // Длинный дифф обрезается по рунам (кириллица), а не по байтам.
