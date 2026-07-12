@@ -17,11 +17,22 @@ import (
 const (
 	// Текст из ТЗ, сценарий 1: пользователь без валидного приглашения.
 	msgAccessDenied = "Доступ ограничен. Этот бот работает только по пригласительным ссылкам."
-	msgWelcome      = "✅ Приглашение принято — доступ открыт!\n\nКоманда /shows покажет список шоу для подписки."
-	msgHelp         = "Доступные команды:\n/shows — список шоу и управление подписками."
-	msgInternalErr  = "Произошла внутренняя ошибка. Попробуйте позже."
-	msgNoShows      = "Шоу пока не добавлены — загляните позже."
-	msgChooseShow   = "Нажмите на шоу, чтобы подписаться или отписаться:"
+
+	// Краткая инструкция для новых пользователей — показывается после
+	// регистрации по инвайту и при повторном /start уже своим.
+	msgInstruction = "Я слежу за страницами шоу Medium Quality и сразу пришлю уведомление, " +
+		"как только откроются продажи билетов.\n\n" +
+		"Как пользоваться:\n" +
+		"• /shows — список шоу. Нажмите на шоу, чтобы подписаться (✅) или отписаться (❌).\n" +
+		"• Когда на подписанном шоу стартуют продажи, я напишу и дам ссылку на страницу покупки."
+
+	msgWelcome     = "✅ Приглашение принято — доступ открыт!\n\n" + msgInstruction
+	msgWelcomeBack = "👋 С возвращением!\n\n" + msgInstruction
+
+	msgHelp        = "Доступные команды:\n/shows — список шоу и управление подписками."
+	msgInternalErr = "Произошла внутренняя ошибка. Попробуйте позже."
+	msgNoShows     = "Шоу пока не добавлены — загляните позже."
+	msgChooseShow  = "Нажмите на шоу, чтобы подписаться или отписаться:"
 
 	toastSubscribed   = "Подписка оформлена ✅"
 	toastUnsubscribed = "Подписка отключена ❌"
@@ -77,7 +88,25 @@ func (h *handler) handleStart(ctx context.Context, b *bot.Bot, update *models.Up
 		return
 	}
 
-	registered, err := h.auth.RegisterByInvite(ctx, msg.From.ID, msg.From.Username, startPayload(msg.Text))
+	// Без токена: уже своим показываем инструкцию (например, переоткрыли бот),
+	// чужакам — отказ по ТЗ. В БД никого не пишем.
+	token := startPayload(msg.Text)
+	if token == "" {
+		authorized, err := h.auth.IsAuthorized(ctx, msg.From.ID)
+		switch {
+		case err != nil:
+			h.log.Error("authorization check", "telegram_id", msg.From.ID, "error", err)
+			h.reply(ctx, b, msg.Chat.ID, msgInternalErr)
+		case authorized:
+			h.reply(ctx, b, msg.Chat.ID, msgWelcomeBack)
+		default:
+			h.reply(ctx, b, msg.Chat.ID, msgAccessDenied)
+		}
+		return
+	}
+
+	// С токеном: регистрируем нового или реактивируем вернувшегося.
+	registered, err := h.auth.RegisterByInvite(ctx, msg.From.ID, msg.From.Username, token)
 	switch {
 	case err != nil:
 		h.log.Error("register by invite", "telegram_id", msg.From.ID, "error", err)
