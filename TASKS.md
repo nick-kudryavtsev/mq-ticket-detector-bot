@@ -370,3 +370,34 @@ SOPS рассматривался и отклонён: его главную п�
 
 **Готово, когда**: бот работает на сервере в webhook-режиме, снаружи открыты
 только 443 и 22, уведомления доходят, дашборд показывает живые метрики.
+
+---
+
+## 20. `feature/20-github-actions` — CI на GitHub Actions
+
+**Цель**: вернуть автоматические проверки и защиту merge, потерянные при
+переезде с GitLab. Оба PR задач 17 и 19 влились без прогона тестов —
+`.gitlab-ci.yml` на GitHub не исполняется.
+
+- [x] `.github/workflows/ci.yml`: lint → test → build, порядок через `needs:`,
+      как последовательность стадий на GitLab
+- [x] Триггеры 1:1 с `workflow:rules`: только PR в `main` и пуш в `main`
+- [x] `concurrency` + `cancel-in-progress` — аналог `interruptible: true`
+- [x] lint: тот же образ `golangci/golangci-lint:v2.12.2-alpine` и та же
+      команда, что в README. Намеренно через `docker run`, а не через
+      `container:` у джобы: JS-действия GitHub запускаются подсунутым Node
+      под glibc и в musl-образе alpine падают
+- [x] test: `actions/setup-go` с `go-version-file: go.mod` (версия Go в одном
+      месте) и кешем модулей по `go.sum`
+- [x] build: `docker build --pull` без Docker-in-Docker — на раннере Docker есть
+- [x] `permissions: contents: read`: у workflow нет ни секретов, ни доступа к
+      серверу. Деплой руками по SSH — см. задачу 19
+- [ ] **Ручной шаг**: после первого прогона включить branch protection на
+      `main` → Require status checks to pass → выбрать `lint`, `test`, `build`.
+      Проверки появляются в списке только после первого запуска, а запись
+      настроек репозитория через прокси недоступна
+- [ ] Удалить `.gitlab-ci.yml` после успешного деплоя (пока оставлен как
+      справка, чтобы не держать два источника правды дольше нужного)
+
+**Готово, когда**: PR в `main` прогоняет три проверки, merge без зелёных
+проверок невозможен.
