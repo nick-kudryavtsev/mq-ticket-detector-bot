@@ -169,6 +169,169 @@ docker exec ticket_nginx wget -qO- \
 Ответы: `202` — рассылка запущена, `403` — неверный секрет,
 `404` — метка не зарегистрирована в таблице `shows`.
 
+## Деплой на сервер
+
+Порядок с нуля на чистой машине. Расчёт на **2 vCPU / 4 ГБ RAM / 20–25 ГБ SSD**,
+Ubuntu 26.04 LTS (кодовое имя `resolute`). Обновление стека — руками по SSH;
+CI только проверяет код и доступа к серверу не имеет.
+
+### 1. Пользователь и SSH
+
+```bash
+sudo adduser deploy && sudo usermod -aG sudo deploy
+sudo mkdir -p /home/deploy/.ssh && sudo nano /home/deploy/.ssh/authorized_keys  # свой публичный ключ
+sudo chown -R deploy:deploy /home/deploy/.ssh && sudo chmod 700 /home/deploy/.ssh
+sudo chmod 600 /home/deploy/.ssh/authorized_keys
+```
+
+В `/etc/ssh/sshd_config`: `PasswordAuthentication no`, `PermitRootLogin no`,
+затем `sudo systemctl restart ssh`. **Проверьте вход новым ключом в отдельной
+сессии, не закрывая текущую** — иначе можно закрыть себе доступ.
+
+### 2. Firewall
+
+```bash
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow 22/tcp    # SSH и туннели к Grafana/скрейперу
+sudo ufw allow 443/tcp   # вебхуки Telegram
+sudo ufw enable
+```
+
+Порт 80 открывается только на время выпуска и продления сертификата
+(`sudo ufw allow 80/tcp`, потом `sudo ufw delete allow 80/tcp`).
+
+> **Важно про UFW и Docker.** Docker пишет свои правила DNAT в цепочку
+> `DOCKER`, которая разбирается **раньше** фильтров UFW, поэтому
+> `ufw deny` **не закрывает** опубликованный контейнером порт. Grafana и
+> changedetection защищены не UFW, а тем, что их порты объявлены как
+> `127.0.0.1:3000:3000` и `127.0.0.1:5001:5000` — Docker слушает их только
+> на loopback. Если когда-нибудь уберёте префикс `127.0.0.1:`, порт станет
+> доступен из интернета, и firewall об этом не узнает.
+
+### 3. Swap
+
+Страховка от пиков Chrome. Лимиты cgroup убьют только провинившийся
+контейнер, но запас не лишний:
+
+```bash
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-swappiness.conf
+```
+
+### 4. Docker
+
+Только из официального репозитория Docker. Не `docker.io` из universe (он
+старее и не даёт плагин Compose V2, а `docker-compose.yml` опирается на
+`deploy.resources.limits`, который читает именно V2) и не snap-версию.
+
+```bash
+sudo apt-get update && sudo apt-get install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io \
+  docker-buildx-plugin docker-compose-plugin
+sudo usermod -aG docker deploy   # членство в группе docker = root на хосте
+```
+
+Ротация логов, иначе на долгоживущей машине они растут без потолка —
+`/etc/docker/daemon.json`:
+
+```json
+{
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "10m", "max-file": "3" }
+}
+```
+
+Затем `sudo systemctl restart docker`.
+
+### 5. Код и секреты
+
+```bash
+git clone https://github.com/nick-kudryavtsev/mq-ticket-detector-bot.git
+cd mq-ticket-detector-bot
+cp .env.example .env && chmod 600 .env
+```
+
+Все значения **генерируются заново на сервере**, дев-значения не переносим:
+
+```bash
+openssl rand -hex 32   # CHANGEDETECTION_AUTH_TOKEN
+openssl rand -hex 16   # TELEGRAM_WEBHOOK_SECRET, GF_SECURITY_ADMIN_PASSWORD
+```
+
+Для webhook-режима: `BOT_MODE=webhook`,
+`WEBHOOK_URL=https://<домен>/telegram/webhook`.
+
+**Продублируйте значения в менеджер паролей.** Это единственная копия вне
+сервера: `BOT_TOKEN` перевыпускается у BotFather, а `POSTGRES_PASSWORD` при
+живом томе с данными восстановить тяжело.
+
+### 6. Домен и сертификат
+
+A-запись домена → плавающий IP. Дальше по разделу
+[Nginx и SSL](#nginx-и-ssl): выпуск webroot-челленджем и продление по cron.
+Проверить продление заранее — `certbot renew --dry-run`.
+
+### 7. Дашборд и запуск
+
+```bash
+curl -sS 'https://grafana.com/api/dashboards/1860/revisions/latest/download' \
+  | sed 's/${DS_PROMETHEUS}/prometheus/g' \
+  > grafana/dashboards/node-exporter-full.json
+
+docker compose up -d --build
+docker compose ps        # migrator должен быть Exited (0), остальное Up
+docker compose logs -f go_backend
+```
+
+### 8. Проверка
+
+```bash
+# Бэкенд жив и видит БД (изнутри сети — наружу порт закрыт)
+docker exec ticket_nginx wget -qO- http://go_backend:8000/readyz
+
+# Вебхук зарегистрирован в Telegram
+curl -s "https://api.telegram.org/bot<BOT_TOKEN>/getWebhookInfo"
+```
+
+Снаружи должны отвечать только 443 и 22. Проверьте с другой машины, что
+5001, 3000, 8000 и 5432 закрыты.
+
+### 9. Скрейпер
+
+Настройки watch-ей живут в томе `changedet_data`, в git их нет — создаются
+заново по разделу [Настройка changedetection.io](#настройка-changedetectionio).
+Шоу добавляются в таблицу `shows` (см. [Управление шоу](#управление-шоу)).
+
+### 10. Бэкап
+
+```bash
+docker compose exec -T postgres_db pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" \
+  | gzip > ~/backup/db-$(date +%F).sql.gz
+```
+
+По cron раз в сутки. **Проверьте восстановление** — непроверенный бэкап
+бэкапом не является.
+
+### Обновление стека
+
+```bash
+cd ~/mq-ticket-detector-bot && git pull
+docker compose up -d --build
+```
+
+`stop_grace_period: 30s` у бэкенда даёт graceful shutdown досылать текущую
+пачку рассылки и снимать вебхук, поэтому перезапуск не теряет уведомления.
+
 ## Мониторинг
 
 Prometheus собирает метрики хоста с `node_exporter` (интервал 15с, retention
