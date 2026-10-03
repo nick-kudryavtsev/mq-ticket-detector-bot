@@ -1,0 +1,69 @@
+# Пайплайн CI (ТЗ §7): lint -> test -> build.
+# Порт .gitlab-ci.yml на GitHub Actions после переезда репозитория.
+name: CI
+
+# Запускается строго в двух случаях, как и на GitLab (экономия минут):
+#   1) Pull Request в main;
+#   2) пуш/слияние в main.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Пайплайну нужно только читать код. Деплой выполняется руками по SSH,
+# поэтому у workflow нет ни секретов, ни доступа к серверу.
+permissions:
+  contents: read
+
+# Аналог `interruptible: true`: новый пуш в ту же ветку отменяет
+# устаревший прогон.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # `needs:` между джобами воспроизводит последовательность стадий GitLab:
+  # сборка не запускается, если тесты не прошли.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Тот же образ и та же версия, что в .gitlab-ci.yml и в README —
+      # линт локально и в CI ведёт себя одинаково.
+      # ТЗ просит v1.55-alpine, но он собран на Go 1.21 и не понимает Go 1.26.
+      #
+      # Намеренно через `docker run`, а не через `container:` у джобы:
+      # JS-действия GitHub (checkout и прочие) запускаются подсунутым
+      # runner-ом Node, собранным под glibc, и в musl-образе alpine падают.
+      - name: golangci-lint
+        run: |
+          docker run --rm -v "$PWD":/app -w /app \
+            golangci/golangci-lint:v2.12.2-alpine golangci-lint run ./...
+
+  test:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          # Версия Go берётся из go.mod — одно место правки
+          go-version-file: go.mod
+          # Кеш модулей по go.sum, аналог `cache: key: files: [go.sum]`
+          cache: true
+      # Раннер на Ubuntu, а не alpine: детектору гонок нужны CGO и glibc,
+      # в musl-окружении -race не поддерживается.
+      - name: go test
+        run: go test -v -race -cover ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Тестовая сборка: подтверждаем, что Dockerfile валиден и проект
+      # собирается в контейнере. Никуда не пушим. Docker-in-Docker не нужен —
+      # на GitHub-раннере Docker уже установлен.
+      - name: docker build
+        run: docker build --pull -t mq-ticket-detector:ci .
