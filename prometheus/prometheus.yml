@@ -7,3 +7,11 @@ scrape_configs:
     static_configs:
       - targets:
           - node_exporter:9100 # Имя сервиса резолвится внутри сети internal_db
+
+  # Собственные метрики Prometheus: нужны, чтобы проверять, что retention 2d
+  # реально действует (prometheus_tsdb_lowest_timestamp_seconds) и что TSDB
+  # не разрастается. Один таргет, стоимость сбора незаметна.
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - localhost:9090

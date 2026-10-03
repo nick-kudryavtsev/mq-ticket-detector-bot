@@ -1,0 +1,18 @@
+# Провайдер дашбордов: Grafana подхватывает JSON-файлы из каталога,
+# смонтированного в /var/lib/grafana/dashboards (см. docker-compose.yml).
+# Импорт «руками через UI» не нужен — дашборд появляется сам при старте.
+apiVersion: 1
+
+providers:
+  - name: node-exporter
+    orgId: 1
+    folder: Host
+    type: file
+    # Дашборд удалён из UI → вернётся при следующем старте
+    disableDeletion: true
+    # Правки из UI не сохраняются: источник истины — файл в git
+    allowUiUpdates: false
+    updateIntervalSeconds: 60
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

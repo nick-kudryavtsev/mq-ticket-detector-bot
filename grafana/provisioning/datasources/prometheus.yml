@@ -1,0 +1,20 @@
+# Data source задаётся файлом, а не руками в UI (Раздел 6 ТЗ).
+# Grafana перечитывает provisioning при каждом старте контейнера.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    # Фиксированный uid: на него ссылаются панели дашборда 1860.
+    # Если его менять — дашборд перестанет находить источник данных.
+    uid: prometheus
+    access: proxy
+    # Имя сервиса резолвится внутри сети internal_db, наружу запрос не идёт
+    url: http://prometheus:9090
+    isDefault: true
+    # Правка из UI запрещена: источник истины — этот файл
+    editable: false
+    jsonData:
+      # Совпадает с scrape_interval в prometheus/prometheus.yml:
+      # Grafana не будет запрашивать точки чаще, чем они появляются
+      timeInterval: 15s
