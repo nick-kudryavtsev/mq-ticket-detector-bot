@@ -34,6 +34,10 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/certs:/etc/nginx/certs:ro # Папка с SSL-сертификатами Let's Encrypt
       - ./nginx/certbot:/var/www/certbot:ro # webroot для ACME-челленджа certbot
+    deploy:
+      resources:
+        limits:
+          memory: 64M # Только терминация TLS и проксирование одного пути
     networks:
       - external_web # Доступен извне, передает трафик внутрь
     depends_on:
@@ -52,6 +56,11 @@ services:
     # Порты "8000:8000" НАРУЖУ НЕ ВЫСТАВЛЯЕМ. Доступ только через Nginx.
     env_file:
       - .env # Загрузка токенов и паролей из локального файла
+    deploy:
+      resources:
+        limits:
+          # Go-бинарь в distroless: ~30–50 МБ с пулом БД и 8 воркерами рассылки
+          memory: 128M
     networks:
       - external_web # Нужен для отправки уведомлений в Telegram API
       - internal_db  # Нужен для безопасной связи с PostgreSQL
@@ -91,6 +100,12 @@ services:
       - .env # Считывает POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          # Данных мало (пользователи, шоу, подписки). Дефолтный shared_buffers
+          # 128 МБ + соединения укладываются с запасом
+          memory: 256M
     networks:
       - internal_db # База находится в полностью изолированной сети
     healthcheck:
@@ -118,6 +133,18 @@ services:
       # JS-страницы (виджеты билетных систем, напр. intickets.ru) рендерит
       # отдельный браузер. Watch с fetch backend «Chrome» ходит сюда.
       - PLAYWRIGHT_DRIVER_URL=ws://sockpuppetbrowser:3000
+      # Скриншот хранится ОДИН на watch (last-screenshot.png перезаписывается),
+      # по истории изменений не копится. Но дефолтная высота 16000px даёт
+      # многомегабайтный PNG и пик RAM при съёмке. Нам нужен верх страницы.
+      - SCREENSHOT_MAX_HEIGHT=3000
+      # Watch-ей единицы; дефолтные 10 параллельных фетчеров только едят память
+      - FETCH_WORKERS=2
+    deploy:
+      resources:
+        limits:
+          # Python-приложение: в простое 150–300 МБ. Потолок, чтобы скрейпер
+          # не выдавил из памяти бота и БД на машине с 4 ГБ
+          memory: 512M
     depends_on:
       - sockpuppetbrowser
 
@@ -184,16 +211,39 @@ services:
     image: grafana/grafana-oss:10.4.1
     container_name: ticket_grafana
     restart: unless-stopped
-    # Порт наружу не публикуем: сеть internal_db изолирована, и published-порты
-    # на ней всё равно не работают. Доступ к панели — через SSH-туннель
-    # или через Nginx (решим на шаге настройки мониторинга).
+    # Панель — только для администратора. Порт слушает ЛОКАЛЬНЫЙ интерфейс
+    # сервера, в интернет не торчит и firewall под него открывать не нужно.
+    # Доступ: ssh -L 3000:127.0.0.1:3000 <сервер>, затем http://localhost:3000
+    # Тот же паттерн, что у changedetection на 5001.
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      # Grafana не должна звонить домой: ни телеметрии, ни проверки обновлений.
+      # Исходящий доступ у неё появился из-за подключения к external_web (см. networks).
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      - GF_NEWS_NEWS_FEED_ENABLED=false
+      # Самостоятельная регистрация и анонимный вход закрыты
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_SECURITY_ADMIN_USER=${GF_SECURITY_ADMIN_USER:-admin}
+      # Без пароля в .env стек не поднимется — это намеренно,
+      # чтобы Grafana не осталась с дефолтным admin/admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:?задайте GF_SECURITY_ADMIN_PASSWORD в .env}
     volumes:
       - grafana_data:/var/lib/grafana
+      # Data source и провайдер дашбордов — файлами, а не руками в UI
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     deploy:
       resources:
         limits:
           memory: 300M # Жесткий лимит памяти из ТЗ
     networks:
-      - internal_db
+      - internal_db  # связь с Prometheus
+      # Нужен только для публикации порта: из сети с internal: true
+      # опубликовать порт нельзя. Наружу Grafana всё равно не видна —
+      # порт привязан к 127.0.0.1.
+      - external_web
     depends_on:
       - prometheus
