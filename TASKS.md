@@ -281,3 +281,84 @@
 
 **Готово, когда**: на 0.60.8 оба watch-а дают реальную рассылку в Telegram
 с читаемым диффом, как на 0.45.20.
+
+---
+
+## 19. `feature/19-deploy` — Деплой на боевой сервер
+
+**Цель**: стек работает на сервере в webhook-режиме, периметр закрыт,
+живые проверки задачи 17 выполнены.
+
+Машина: Ubuntu 26.04 LTS (`resolute`), 2 vCPU / 4 ГБ RAM / 70 ГБ SSD,
+плавающий IP, базовая защита от DDoS.
+
+### Подготовка машины
+
+- [ ] Непривилегированный пользователь для деплоя; SSH только по ключу
+      (`PasswordAuthentication no`, `PermitRootLogin no`)
+- [ ] UFW: `default deny incoming`, открыты **22** и **443**. Порт **80** —
+      только на время выпуска и продления сертификата
+- [ ] Swap-файл 2 ГБ, `vm.swappiness=10` — сглаживает пики Chrome. Лимиты
+      cgroup убьют только провинившийся контейнер, но запас лишним не будет
+- [ ] **Docker Engine из официального репозитория Docker** (`download.docker.com/linux/ubuntu`,
+      кодовое имя `resolute`): `docker-ce docker-ce-cli containerd.io
+      docker-buildx-plugin docker-compose-plugin`.
+      НЕ `docker.io` из universe (старее и без плагина compose v2) и не snap
+- [ ] Ротация логов Docker в `/etc/docker/daemon.json`
+      (`json-file`, `max-size=10m`, `max-file=3`) — иначе логи контейнеров
+      растут без потолка на долгоживущей машине
+- [ ] `unattended-upgrades` для обновлений безопасности
+- [ ] Учесть: пользователь в группе `docker` равносилен root на хосте
+
+### Secrets
+
+- [ ] `.env` на сервере: владелец — пользователь деплоя, `chmod 600`
+- [ ] Все секреты сгенерировать заново на сервере; дев-значения не переносить
+- [ ] Сузить область переменных: `postgres_db` получает только `POSTGRES_*`
+      через `environment`, а не весь `.env` через `env_file`. Сейчас в его
+      окружении лежат `BOT_TOKEN`, `CHANGEDETECTION_AUTH_TOKEN` и пароль
+      Grafana, которые ему не нужны
+- [ ] (опционально) SOPS + age: `.env.sops` в git, приватный ключ только на
+      сервере и в менеджере паролей — чтобы секреты переживали смерть машины,
+      не лежа в git открытым текстом
+
+### Домен и TLS
+
+- [ ] A-запись домена → плавающий IP
+- [ ] Выпуск сертификата certbot webroot (порядок уже в README)
+- [ ] Продление по cron + `nginx -s reload`; проверить `certbot renew --dry-run`
+- [ ] Убедиться, что nginx отдаёт 404 на всё, кроме `/telegram/webhook`,
+      и что порты бэкенда, БД, Grafana и скрейпера снаружи не слушают
+
+### Запуск стека
+
+- [ ] `.env`: `BOT_MODE=webhook`, `WEBHOOK_URL=https://<домен>/telegram/webhook`,
+      `TELEGRAM_WEBHOOK_SECRET`, `GF_SECURITY_ADMIN_PASSWORD`
+- [ ] Положить JSON дашборда 1860 в `grafana/dashboards/` (команда в README) —
+      закрывает открытый пункт задачи 17
+- [ ] `docker compose up -d --build`; `migrator` завершился успешно
+- [ ] `/healthz` и `/readyz` отвечают; вебхук зарегистрирован (`getWebhookInfo`)
+
+### Перенос скрейпера
+
+- [ ] Watch-и создать заново: их настройки живут в volume `changedet_data`,
+      в git их нет
+- [ ] Для intickets.ru — UA-override (Request → Headers), иначе 403 на
+      headless-Chrome
+- [ ] Notification-URL с `+X-Changedetection-Auth` и `:notification_tags=<label>`,
+      Body = `{{diff_added}}`
+- [ ] INSERT шоу в таблицу `shows` (title, changedetection_label, url)
+
+### Приёмка
+
+- [ ] Инвайт-ссылка: новый пользователь регистрируется и видит инструкцию
+- [ ] `/shows`: подписка и отписка сохраняются
+- [ ] Реальное изменение страницы → уведомление с диффом и кнопкой
+- [ ] **Живая проверка задачи 17**: дашборд 1860 показывает CPU/RAM/диск хоста
+      через SSH-туннель
+- [ ] Через 48 часов работы retention выходит на плато ~172800с
+- [ ] Бэкап: `pg_dump` по cron + проверенный план восстановления
+- [ ] Раздел «Деплой» в README: порядок с нуля на чистой машине
+
+**Готово, когда**: бот работает на сервере в webhook-режиме, снаружи открыты
+только 443 и 22, уведомления доходят, дашборд показывает живые метрики.
