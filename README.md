@@ -175,20 +175,61 @@ docker exec ticket_nginx wget -qO- \
 Ubuntu 26.04 LTS (кодовое имя `resolute`). Обновление стека — руками по SSH;
 CI только проверяет код и доступа к серверу не имеет.
 
-### 1. Пользователь и SSH
+**Большинство шагов выполняется на сервере, но не все.** У каждого шага ниже
+стоит пометка, где он делается:
+
+| Пометка | Значение |
+|---|---|
+| `[сервер]` | в SSH-сессии на боевой машине |
+| `[локально]` | на вашем компьютере |
+| `[браузер]` | в веб-интерфейсе (регистратор домена, Telegram, UI скрейпера) |
+
+Три места, где легко ошибиться, если не следить за этим:
+
+- Проверять закрытость портов **с сервера бессмысленно**: `curl localhost:3000`
+  там ответит, потому что порт слушает loopback — так и задумано. Проверка
+  имеет смысл только с другой машины по публичному IP (шаг 8).
+- Членство в группе `docker` применяется **только после перелогина**: сразу
+  после `usermod` текущая сессия ещё без прав (шаг 4).
+- Шаги 0–1 выполняются под root, и там же можно отрезать себе доступ. Вход
+  новым пользователем проверяется **в отдельном окне, не закрывая root-сессию**.
+
+### 0. Первый вход `[локально]`
+
+IP и пароль root даёт хостер. Если своей ключевой пары ещё нет:
 
 ```bash
-sudo adduser deploy && sudo usermod -aG sudo deploy
-sudo mkdir -p /home/deploy/.ssh && sudo nano /home/deploy/.ssh/authorized_keys  # свой публичный ключ
-sudo chown -R deploy:deploy /home/deploy/.ssh && sudo chmod 700 /home/deploy/.ssh
-sudo chmod 600 /home/deploy/.ssh/authorized_keys
+ssh-keygen -t ed25519            # создаст ~/.ssh/id_ed25519[.pub]
+cat ~/.ssh/id_ed25519.pub        # это значение понадобится на шаге 1
+ssh root@<плавающий-IP>
+```
+
+### 1. Пользователь и SSH `[сервер]`
+
+Под root, в сессии из шага 0:
+
+```bash
+adduser deploy && usermod -aG sudo deploy
+mkdir -p /home/deploy/.ssh
+nano /home/deploy/.ssh/authorized_keys   # вставить публичный ключ из шага 0
+chown -R deploy:deploy /home/deploy/.ssh && chmod 700 /home/deploy/.ssh
+chmod 600 /home/deploy/.ssh/authorized_keys
 ```
 
 В `/etc/ssh/sshd_config`: `PasswordAuthentication no`, `PermitRootLogin no`,
-затем `sudo systemctl restart ssh`. **Проверьте вход новым ключом в отдельной
-сессии, не закрывая текущую** — иначе можно закрыть себе доступ.
+затем `systemctl restart ssh`.
 
-### 2. Firewall
+Теперь **не закрывая root-сессию**, в отдельном окне `[локально]`:
+
+```bash
+ssh deploy@<плавающий-IP>        # должно пустить по ключу
+sudo -v                          # и sudo должен работать
+```
+
+Только после удачной проверки закрывайте root-сессию. Дальше все шаги
+с пометкой `[сервер]` выполняются от пользователя `deploy`.
+
+### 2. Firewall `[сервер]`
 
 ```bash
 sudo ufw default deny incoming
@@ -209,7 +250,7 @@ sudo ufw enable
 > на loopback. Если когда-нибудь уберёте префикс `127.0.0.1:`, порт станет
 > доступен из интернета, и firewall об этом не узнает.
 
-### 3. Swap
+### 3. Swap `[сервер]`
 
 Страховка от пиков Chrome. Лимиты cgroup убьют только провинившийся
 контейнер, но запас не лишний:
@@ -221,7 +262,7 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-swappiness.conf
 ```
 
-### 4. Docker
+### 4. Docker `[сервер]`
 
 Только из официального репозитория Docker. Не `docker.io` из universe (он
 старее и не даёт плагин Compose V2, а `docker-compose.yml` опирается на
@@ -253,7 +294,11 @@ sudo usermod -aG docker deploy   # членство в группе docker = roo
 
 Затем `sudo systemctl restart docker`.
 
-### 5. Код и секреты
+**Перелогиньтесь** (`exit`, затем снова `ssh deploy@...`) — членство в группе
+`docker` в текущей сессии ещё не действует, и `docker ps` будет ругаться на
+права. Проверка: `docker run --rm hello-world` без `sudo`.
+
+### 5. Код и секреты `[сервер]`
 
 ```bash
 git clone https://github.com/nick-kudryavtsev/mq-ticket-detector-bot.git
@@ -268,20 +313,31 @@ openssl rand -hex 32   # CHANGEDETECTION_AUTH_TOKEN
 openssl rand -hex 16   # TELEGRAM_WEBHOOK_SECRET, GF_SECURITY_ADMIN_PASSWORD
 ```
 
+Два значения приходят не из `openssl`:
+
+- `BOT_TOKEN` и `BOT_USERNAME` — от [@BotFather](https://t.me/BotFather)
+  `[браузер]`. Можно взять токен уже существующего бота, но тогда у него
+  останутся и прежние подписчики в чужой БД
+- `POSTGRES_PASSWORD` — любой сильный, но его надо запомнить (см. ниже)
+
 Для webhook-режима: `BOT_MODE=webhook`,
 `WEBHOOK_URL=https://<домен>/telegram/webhook`.
 
-**Продублируйте значения в менеджер паролей.** Это единственная копия вне
-сервера: `BOT_TOKEN` перевыпускается у BotFather, а `POSTGRES_PASSWORD` при
-живом томе с данными восстановить тяжело.
+**Продублируйте все значения в менеджер паролей** `[локально]`. Это
+единственная копия вне сервера: `BOT_TOKEN` перевыпускается у BotFather,
+а `POSTGRES_PASSWORD` при живом томе с данными восстановить тяжело.
 
-### 6. Домен и сертификат
+### 6. Домен и сертификат `[браузер → сервер]`
 
-A-запись домена → плавающий IP. Дальше по разделу
-[Nginx и SSL](#nginx-и-ssl): выпуск webroot-челленджем и продление по cron.
-Проверить продление заранее — `certbot renew --dry-run`.
+A-запись домена → плавающий IP — **в панели регистратора домена** `[браузер]`.
+Дождитесь, пока запись разойдётся: `dig +short <домен>` должен вернуть ваш IP,
+иначе ACME-челлендж не пройдёт.
 
-### 7. Дашборд и запуск
+Дальше `[сервер]`, по разделу [Nginx и SSL](#nginx-и-ssl): выпуск
+webroot-челленджем и продление по cron. Порт 80 на время выпуска должен быть
+открыт (шаг 2). Проверить продление заранее — `certbot renew --dry-run`.
+
+### 7. Дашборд и запуск `[сервер]`
 
 ```bash
 curl -sS 'https://grafana.com/api/dashboards/1860/revisions/latest/download' \
@@ -293,26 +349,52 @@ docker compose ps        # migrator должен быть Exited (0), остал
 docker compose logs -f go_backend
 ```
 
-### 8. Проверка
+### 8. Проверка `[сервер + локально]`
+
+Изнутри `[сервер]`:
 
 ```bash
-# Бэкенд жив и видит БД (изнутри сети — наружу порт закрыт)
+# Бэкенд жив и видит БД (запрос из сети docker — наружу порт закрыт)
 docker exec ticket_nginx wget -qO- http://go_backend:8000/readyz
 
 # Вебхук зарегистрирован в Telegram
 curl -s "https://api.telegram.org/bot<BOT_TOKEN>/getWebhookInfo"
 ```
 
-Снаружи должны отвечать только 443 и 22. Проверьте с другой машины, что
-5001, 3000, 8000 и 5432 закрыты.
+Снаружи `[локально]` — **именно с другого компьютера, не с сервера**:
 
-### 9. Скрейпер
+```bash
+for p in 22 443; do
+  nc -z -w3 <плавающий-IP> $p && echo "$p открыт — так и надо"
+done
+for p in 80 3000 5001 8000 5432; do
+  nc -z -w3 <плавающий-IP> $p && echo "ВНИМАНИЕ: $p открыт снаружи"
+done
+```
+
+Второй цикл не должен напечатать ничего. Порт 80 — тоже: после выпуска
+сертификата он закрывается (шаг 2).
+
+С самого сервера эта проверка бессмысленна: `curl localhost:3000` там ответит,
+потому что Grafana слушает loopback — так и задумано, и о доступности из
+интернета это ничего не говорит.
+
+### 9. Скрейпер `[локально → браузер]`
 
 Настройки watch-ей живут в томе `changedet_data`, в git их нет — создаются
-заново по разделу [Настройка changedetection.io](#настройка-changedetectionio).
-Шоу добавляются в таблицу `shows` (см. [Управление шоу](#управление-шоу)).
+заново. UI скрейпера наружу не смотрит, поэтому туда ходят туннелем
+`[локально]`:
 
-### 10. Бэкап
+```bash
+ssh -L 5001:127.0.0.1:5001 deploy@<плавающий-IP>
+```
+
+Затем `http://localhost:5001` `[браузер]` и далее по разделу
+[Настройка changedetection.io](#настройка-changedetectionio).
+Шоу добавляются в таблицу `shows` `[сервер]` (см.
+[Управление шоу](#управление-шоу)).
+
+### 10. Бэкап `[сервер]`
 
 ```bash
 docker compose exec -T postgres_db pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" \
@@ -322,7 +404,7 @@ docker compose exec -T postgres_db pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" \
 По cron раз в сутки. **Проверьте восстановление** — непроверенный бэкап
 бэкапом не является.
 
-### Обновление стека
+### Обновление стека `[сервер]`
 
 ```bash
 cd ~/mq-ticket-detector-bot && git pull
