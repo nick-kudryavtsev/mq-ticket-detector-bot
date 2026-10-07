@@ -13,6 +13,9 @@ nginx/certs/*
 nginx/certbot/*
 !nginx/certbot/.gitkeep
 
+# Состояние certbot: сертификаты, ключи и история продлений
+letsencrypt/
+
 # Go (понадобится на следующих шагах)
 /bin/
 *.test
