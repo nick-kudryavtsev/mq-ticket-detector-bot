@@ -126,7 +126,10 @@ mediumquality.ru) браузер не нужен, они работают на �
 
 ### Локально (самоподписанный, для проверки)
 
+Из корня репозитория — пути относительные:
+
 ```bash
+mkdir -p nginx/certs
 openssl req -x509 -newkey rsa:2048 -nodes \
   -keyout nginx/certs/privkey.pem -out nginx/certs/fullchain.pem \
   -days 365 -subj "/CN=localhost"
@@ -144,9 +147,11 @@ openssl req -x509 -newkey rsa:2048 -nodes \
 (`dig +short <домен>` возвращает ваш IP), порт 80 открыт в firewall.
 
 **1. Заглушка, чтобы nginx поднялся** — та же команда, что в локальном
-варианте выше:
+варианте выше, из корня репозитория:
 
 ```bash
+cd ~/mq-ticket-detector-bot
+mkdir -p nginx/certs
 openssl req -x509 -newkey rsa:2048 -nodes \
   -keyout nginx/certs/privkey.pem -out nginx/certs/fullchain.pem \
   -days 1 -subj "/CN=bootstrap"
@@ -412,6 +417,12 @@ cd mq-ticket-detector-bot
 cp .env.example .env && chmod 600 .env
 ```
 
+> **Все дальнейшие команды `[сервер]` выполняются из корня репозитория** —
+> пути в них относительные, а `docker compose` ищет рядом `docker-compose.yml`.
+> Если вернулись в сессию позже, начните с `cd ~/mq-ticket-detector-bot`.
+> Признак того, что вы не там: `No such file or directory` на путь вида
+> `nginx/certs/...`.
+
 Все значения **генерируются заново на сервере**, дев-значения не переносим:
 
 ```bash
@@ -449,11 +460,14 @@ dig +short <домен>       # должен вернуть ваш плаваю�
 обслужить ACME-челлендж:
 
 ```bash
+cd ~/mq-ticket-detector-bot          # все пути ниже — относительные
+mkdir -p nginx/certs grafana/dashboards
+
 openssl req -x509 -newkey rsa:2048 -nodes \
   -keyout nginx/certs/privkey.pem -out nginx/certs/fullchain.pem \
   -days 1 -subj "/CN=bootstrap"
 
-curl -sS 'https://grafana.com/api/dashboards/1860/revisions/latest/download' \
+curl -sS --fail 'https://grafana.com/api/dashboards/1860/revisions/latest/download' \
   | sed 's/${DS_PROMETHEUS}/prometheus/g' \
   > grafana/dashboards/node-exporter-full.json
 
@@ -519,9 +533,16 @@ ssh -L 5001:127.0.0.1:5001 deploy@<плавающий-IP>
 ### 11. Бэкап `[сервер]`
 
 ```bash
-docker compose exec -T postgres_db pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" \
+mkdir -p ~/backup
+docker compose exec -T postgres_db \
+  sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' \
   | gzip > ~/backup/db-$(date +%F).sql.gz
 ```
+
+Кавычки здесь одинарные намеренно: `$POSTGRES_USER` и `$POSTGRES_DB`
+раскрывает шелл **внутри контейнера**, где они уже есть из `.env`. С двойными
+кавычками их подставлял бы ваш шелл — и в cron, где окружения нет, вышло бы
+`pg_dump -U ""`.
 
 По cron раз в сутки. **Проверьте восстановление** — непроверенный бэкап
 бэкапом не является.
@@ -568,11 +589,16 @@ ssh -L 3000:127.0.0.1:3000 <пользователь>@<сервер>
 результат коммитится):
 
 ```bash
-curl -sS 'https://grafana.com/api/dashboards/1860/revisions/latest/download' \
+mkdir -p grafana/dashboards
+curl -sS --fail 'https://grafana.com/api/dashboards/1860/revisions/latest/download' \
   | sed 's/${DS_PROMETHEUS}/prometheus/g' \
   > grafana/dashboards/node-exporter-full.json
 docker compose up -d grafana
 ```
+
+`--fail` обязателен: без него ошибка HTTP запишется в файл как обычный ответ,
+и Grafana молча не покажет дашборд. Проверить, что скачалось валидное:
+`head -c 40 grafana/dashboards/node-exporter-full.json` — должен начинаться с `{`.
 
 `sed` обязателен: JSON с grafana.com ссылается на источник данных через
 подстановку `${DS_PROMETHEUS}`, которая заполняется только при импорте руками.
