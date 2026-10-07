@@ -124,7 +124,7 @@ mediumquality.ru) браузер не нужен, они работают на �
 `/telegram/webhook`. Сертификаты nginx читает из `nginx/certs/`
 (`fullchain.pem` + `privkey.pem`).
 
-**Локально** (самоподписанный, для проверки):
+### Локально (самоподписанный, для проверки)
 
 ```bash
 openssl req -x509 -newkey rsa:2048 -nodes \
@@ -132,22 +132,105 @@ openssl req -x509 -newkey rsa:2048 -nodes \
   -days 365 -subj "/CN=localhost"
 ```
 
-**На сервере** (Let's Encrypt, webroot-челлендж — порт 80 уже отдаёт
-`/.well-known/acme-challenge/` из `nginx/certbot/`):
+### Первый выпуск на сервере
+
+> **Курица и яйцо.** В 443-блоке `nginx.conf` прописаны пути к сертификату,
+> и без этих файлов **nginx не стартует**. А webroot-челлендж требует, чтобы
+> nginx уже отдавал `/.well-known/acme-challenge/` на :80. Поэтому сначала
+> кладём самоподписанную заглушку — она нужна только чтобы nginx поднялся
+> и смог обслужить челлендж.
+
+Предварительно: A-запись домена указывает на сервер и уже разошлась
+(`dig +short <домен>` возвращает ваш IP), порт 80 открыт в firewall.
+
+**1. Заглушка, чтобы nginx поднялся** — та же команда, что в локальном
+варианте выше:
+
+```bash
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout nginx/certs/privkey.pem -out nginx/certs/fullchain.pem \
+  -days 1 -subj "/CN=bootstrap"
+```
+
+**2. Поднять стек и убедиться, что :80 отвечает:**
+
+```bash
+docker compose up -d
+curl -sI http://<домен>/.well-known/acme-challenge/probe | head -n1
+```
+
+Ожидается `HTTP/1.1 404 Not Found` — файла нет, но **nginx отвечает**. Если
+видите `Connection refused`, nginx не поднялся: смотрите
+`docker compose logs nginx`. Редирект `301` вместо `404` означает, что запрос
+не попал в ACME-location — проверьте путь.
+
+**3. Выпустить настоящий сертификат:**
 
 ```bash
 docker run --rm \
   -v "$PWD/nginx/certbot:/var/www/certbot" \
   -v "$PWD/letsencrypt:/etc/letsencrypt" \
   certbot/certbot certonly --webroot -w /var/www/certbot \
-  -d ваш-домен.ru --email admin@ваш-домен.ru --agree-tos --no-eff-email
-
-cp letsencrypt/live/ваш-домен.ru/fullchain.pem nginx/certs/
-cp letsencrypt/live/ваш-домен.ru/privkey.pem nginx/certs/
-docker compose restart nginx
+  -d <домен> --email admin@<домен> --agree-tos --no-eff-email
 ```
 
-Продление — тот же `certonly` по cron раз в месяц (Let's Encrypt живёт 90 дней).
+**4. Поставить его в nginx вместо заглушки:**
+
+```bash
+sudo cp letsencrypt/live/<домен>/fullchain.pem \
+        letsencrypt/live/<домен>/privkey.pem nginx/certs/
+docker compose exec nginx nginx -s reload
+```
+
+`sudo` нужен потому, что certbot в контейнере работает от root и файлы в
+`letsencrypt/` ему и принадлежат.
+
+**5. Проверить, что отдаётся именно он:**
+
+```bash
+echo | openssl s_client -connect <домен>:443 -servername <домен> 2>/dev/null \
+  | openssl x509 -noout -issuer -subject -dates
+```
+
+В `issuer` должен быть Let's Encrypt, а не `CN=bootstrap`.
+
+### Продление
+
+Скрипт [`scripts/renew-cert.sh`](scripts/renew-cert.sh) делает три вещи:
+продлевает, копирует результат в `nginx/certs/` и перезагружает nginx.
+Домен он берёт из `WEBHOOK_URL` в `.env`, чтобы тот не хранился в двух местах.
+
+```bash
+sudo crontab -e
+# ежедневно в 4:17 — ночью и не в начало часа, когда к Let's Encrypt
+# стучится весь интернет
+17 4 * * * /home/deploy/mq-ticket-detector-bot/scripts/renew-cert.sh
+```
+
+Три вещи, в которых легко ошибиться:
+
+- **`renew`, а не `certonly`.** `renew` ничего не делает, пока до истечения
+  больше 30 дней. Повторные `certonly` пересоздают сертификат каждый запуск
+  и упираются в rate limit Let's Encrypt.
+- **Ежедневно, а не раз в месяц.** Сертификат живёт 90 дней, окно продления —
+  последние 30. Ежедневный запуск даёт тридцать попыток; при месячном
+  расписании один сбой оставляет 60 дней, два — приводят к истечению.
+- **Копирование обязательно.** certbot обновляет `letsencrypt/live/`, а nginx
+  читает `nginx/certs/`. Без копирования и reload сайт проработает на старом
+  сертификате до самого истечения и упадёт без предупреждения.
+
+Порт 80 должен оставаться открытым: окно продления наступает в момент,
+который заранее неизвестен, а на :80 nginx отдаёт только ACME-путь и редирект
+на HTTPS (см. `nginx.conf`) — открывать и закрывать его из cron не нужно.
+
+Проверить, что всё сложится, не дожидаясь окна:
+
+```bash
+docker run --rm \
+  -v "$PWD/nginx/certbot:/var/www/certbot" \
+  -v "$PWD/letsencrypt:/etc/letsencrypt" \
+  certbot/certbot renew --webroot -w /var/www/certbot --dry-run
+```
 
 ## Вебхук скрейпера
 
@@ -188,7 +271,7 @@ CI только проверяет код и доступа к серверу н
 
 - Проверять закрытость портов **с сервера бессмысленно**: `curl localhost:3000`
   там ответит, потому что порт слушает loopback — так и задумано. Проверка
-  имеет смысл только с другой машины по публичному IP (шаг 8).
+  имеет смысл только с другой машины по публичному IP (шаг 9).
 - Членство в группе `docker` применяется **только после перелогина**: сразу
   после `usermod` текущая сессия ещё без прав (шаг 4).
 - Шаги 0–1 выполняются под root, и там же можно отрезать себе доступ. Вход
@@ -254,12 +337,16 @@ sudo -v                          # и sudo должен работать
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
 sudo ufw allow 22/tcp    # SSH и туннели к Grafana/скрейперу
+sudo ufw allow 80/tcp    # ACME-челлендж Let's Encrypt + редирект на HTTPS
 sudo ufw allow 443/tcp   # вебхуки Telegram
 sudo ufw enable
 ```
 
-Порт 80 открывается только на время выпуска и продления сертификата
-(`sudo ufw allow 80/tcp`, потом `sudo ufw delete allow 80/tcp`).
+Порт 80 остаётся открытым постоянно. Соблазнительно открывать его только на
+время выпуска сертификата, но окно автоматического продления наступает в
+заранее неизвестный момент, и управлять firewall из cron — лишняя хрупкость.
+Плата за это невелика: на :80 nginx отдаёт только `/.well-known/acme-challenge/`
+и редирект на HTTPS, всё остальное уходит в 301 (см. `nginx.conf`).
 
 > **Важно про UFW и Docker.** Docker пишет свои правила DNAT в цепочку
 > `DOCKER`, которая разбирается **раньше** фильтров UFW, поэтому
@@ -346,29 +433,45 @@ openssl rand -hex 16   # TELEGRAM_WEBHOOK_SECRET, GF_SECURITY_ADMIN_PASSWORD
 единственная копия вне сервера: `BOT_TOKEN` перевыпускается у BotFather,
 а `POSTGRES_PASSWORD` при живом томе с данными восстановить тяжело.
 
-### 6. Домен и сертификат `[браузер → сервер]`
+### 6. Домен `[браузер]`
 
-A-запись домена → плавающий IP — **в панели регистратора домена** `[браузер]`.
-Дождитесь, пока запись разойдётся: `dig +short <домен>` должен вернуть ваш IP,
-иначе ACME-челлендж не пройдёт.
-
-Дальше `[сервер]`, по разделу [Nginx и SSL](#nginx-и-ssl): выпуск
-webroot-челленджем и продление по cron. Порт 80 на время выпуска должен быть
-открыт (шаг 2). Проверить продление заранее — `certbot renew --dry-run`.
-
-### 7. Дашборд и запуск `[сервер]`
+A-запись домена → плавающий IP, **в панели регистратора домена**. Дождитесь,
+пока запись разойдётся — иначе ACME-челлендж не пройдёт:
 
 ```bash
+dig +short <домен>       # должен вернуть ваш плавающий IP
+```
+
+### 7. Запуск стека `[сервер]`
+
+Сертификата ещё нет, а без файлов сертификата nginx не стартует — поэтому
+сначала самоподписанная заглушка на один день, чисто чтобы он поднялся и смог
+обслужить ACME-челлендж:
+
+```bash
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout nginx/certs/privkey.pem -out nginx/certs/fullchain.pem \
+  -days 1 -subj "/CN=bootstrap"
+
 curl -sS 'https://grafana.com/api/dashboards/1860/revisions/latest/download' \
   | sed 's/${DS_PROMETHEUS}/prometheus/g' \
   > grafana/dashboards/node-exporter-full.json
 
 docker compose up -d --build
 docker compose ps        # migrator должен быть Exited (0), остальное Up
-docker compose logs -f go_backend
 ```
 
-### 8. Проверка `[сервер + локально]`
+### 8. Сертификат `[сервер]`
+
+Теперь, когда nginx отвечает на :80, выпускаем настоящий сертификат и ставим
+его вместо заглушки — порядок в разделе
+[Первый выпуск на сервере](#первый-выпуск-на-сервере), шаги 2–5. Там же
+прописывается ежедневный cron на продление.
+
+Пока в `nginx/certs/` лежит заглушка, Telegram вебхук не примет: он требует
+валидный сертификат. Поэтому этот шаг идёт до проверки вебхука.
+
+### 9. Проверка `[сервер + локально]`
 
 Изнутри `[сервер]`:
 
@@ -383,22 +486,22 @@ curl -s "https://api.telegram.org/bot<BOT_TOKEN>/getWebhookInfo"
 Снаружи `[локально]` — **именно с другого компьютера, не с сервера**:
 
 ```bash
-for p in 22 443; do
+for p in 22 80 443; do
   nc -z -w3 <плавающий-IP> $p && echo "$p открыт — так и надо"
 done
-for p in 80 3000 5001 8000 5432; do
+for p in 3000 5001 8000 5432; do
   nc -z -w3 <плавающий-IP> $p && echo "ВНИМАНИЕ: $p открыт снаружи"
 done
 ```
 
-Второй цикл не должен напечатать ничего. Порт 80 — тоже: после выпуска
-сертификата он закрывается (шаг 2).
+Второй цикл не должен напечатать ничего. Порт 80 в первом списке — он остаётся
+открытым под ACME-продление и отдаёт только челлендж и редирект (шаг 2).
 
 С самого сервера эта проверка бессмысленна: `curl localhost:3000` там ответит,
 потому что Grafana слушает loopback — так и задумано, и о доступности из
 интернета это ничего не говорит.
 
-### 9. Скрейпер `[локально → браузер]`
+### 10. Скрейпер `[локально → браузер]`
 
 Настройки watch-ей живут в томе `changedet_data`, в git их нет — создаются
 заново. UI скрейпера наружу не смотрит, поэтому туда ходят туннелем
@@ -413,7 +516,7 @@ ssh -L 5001:127.0.0.1:5001 deploy@<плавающий-IP>
 Шоу добавляются в таблицу `shows` `[сервер]` (см.
 [Управление шоу](#управление-шоу)).
 
-### 10. Бэкап `[сервер]`
+### 11. Бэкап `[сервер]`
 
 ```bash
 docker compose exec -T postgres_db pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" \
